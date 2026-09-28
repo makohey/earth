@@ -176,7 +176,7 @@ scene.add(globe);
 /* ===== 値の面を描く係（Renderer）。色の意味は Visual Profile が決める ===== */
 const RAIN_PROFILE = {
   label: "雨の色＝降水の強さ（mm/h）",
-  stops: [[0.1,[0.82,0.87,1.00,0.20]],[1,[0.78,0.82,1.00,0.42]],[5,[0.74,0.66,1.00,0.62]],[15,[0.90,0.55,1.00,0.80]],[40,[1.00,0.43,0.78,0.92]]],
+  stops: [[0.1,[0.82,0.87,1.00,0.12]],[1,[0.78,0.82,1.00,0.26]],[5,[0.74,0.66,1.00,0.40]],[15,[0.90,0.55,1.00,0.52]],[40,[1.00,0.43,0.78,0.62]]],   // 透け具合：下の風と地形が見えるように控えめ
   ticks: [0.1, 1, 5, 15, 40],
   /** 値の見せ方：単位・桁・「なし」の言い方・補足 */
   present: { name: "降水", units: "mm/h", digits: 1, below: [0.1, "0.1 mm/h 未満"], missing: "データなし" },
@@ -380,7 +380,7 @@ document.getElementById("d-rows").innerHTML = [
 if (Catalog.license("wind-10m")) { document.getElementById("d-mit").textContent = Catalog.license("wind-10m"); document.getElementById("d-lic").hidden = false; }
 document.getElementById("m-mode").textContent = Catalog.mode === "live" ? "最新" : "サンプル";
 document.getElementById("d-note").textContent = Catalog.mode === "live"
-  ? "風と雨は同じGFSの計算（同じ初期時刻・同じ予報時間）から取っているので、同じ時刻として重ねています。これは数値モデルの計算結果で、気象庁の予報・警報ではありません。線の速さと長さは見やすさのための表示倍率で、風速の値そのものは変えていません。"
+  ? "風と雨は同じGFSの計算（同じ初期時刻・同じ予報時間）から取っているので、同じ時刻として重ねています。線の速さと長さは見やすさのための表示倍率で、風速の値そのものは変えていません。"
   : "いまは最新データが見つからないため、固定のサンプル（風は2014年、雨は2021年）で動いています。線の速さと長さは見やすさのための表示倍率で、風速の値そのものは変えていません。";
 const css = c => `rgb(${c.map(x => Math.round(x * 255)).join(",")})`;
 document.getElementById("d-bar").style.background = `linear-gradient(90deg, ${LINE_STOPS.map(([s, c]) => `${css(c)} ${(s / 30 * 100).toFixed(1)}%`).join(", ")})`;

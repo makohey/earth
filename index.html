@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>地球儀 試作1B</title>
-<meta name="description" content="風と雨が流れるブラウザの地球儀（試作）">
+<meta name="description" content="風と雨が流れるブラウザの地球儀（試作）。天気予報ではありません。">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -35,7 +35,11 @@
   .brand{position:fixed;left:16px;top:calc(14px + env(safe-area-inset-top,0px));display:flex;align-items:baseline;gap:10px;user-select:none;cursor:default}
   .brand b{font-weight:700;font-size:17px;letter-spacing:.06em}
   .brand span{font-family:var(--mono);font-size:11px;color:var(--ink-faint);letter-spacing:.08em}
-  .meter{position:fixed;left:16px;top:calc(46px + env(safe-area-inset-top,0px));font-family:var(--mono);font-size:11px;line-height:1.55;color:var(--ink-soft);background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:8px 10px;font-variant-numeric:tabular-nums;min-width:150px}
+  .caution{position:fixed;left:16px;top:calc(40px + env(safe-area-inset-top,0px));font-size:10.5px;letter-spacing:.04em;color:var(--ink-faint);pointer-events:none;user-select:none;max-width:calc(100% - 96px)}
+  .caution-box{border:1px solid color-mix(in srgb,var(--warn) 40%,transparent);border-radius:10px;padding:10px 12px;font-size:12px;line-height:1.65;color:var(--ink-soft)}
+  .caution-box b{color:var(--warn);font-weight:500}
+  .caution-box a{color:var(--accent)}
+  .meter{position:fixed;left:16px;top:calc(62px + env(safe-area-inset-top,0px));font-family:var(--mono);font-size:11px;line-height:1.55;color:var(--ink-soft);background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:8px 10px;font-variant-numeric:tabular-nums;min-width:150px}
   .meter div{display:flex;justify-content:space-between;gap:14px}
   .meter i{font-style:normal;color:var(--ink)}
   /* Lens：見る帯（触れない）と、開くボタン（右上）を分ける */
@@ -94,6 +98,7 @@
 <p class="loading" id="loading">データを読み込んでいます…</p>
 <div id="stage" aria-label="回して拡大できる地球"></div>
 <div class="brand" id="brand"><b>地球儀</b><span>試作1B</span></div>
+<div class="caution">眺めるための地球儀です・天気予報ではありません</div>
 <div class="meter" id="meter" hidden>
   <div>FPS<i id="m-fps">–</i></div>
   <div>平均フレーム<i id="m-avg">–</i></div>
@@ -114,6 +119,7 @@
 </button>
 <section class="lens-panel" id="lens" aria-label="Lens" hidden>
   <div class="detail" id="detail">
+    <div class="caution-box"><b>これは地球を眺めるための地球儀で、天気予報ではありません。</b><br>表示している風と雨は数値モデルの計算結果をそのまま描いたもので、気象庁の予報・警報ではありません。台風や大雨への備えは、必ず<a href="https://www.jma.go.jp/bosai/" target="_blank" rel="noopener">気象庁の防災情報</a>で確かめてください。</div>
     <dl class="rows" id="d-rows"></dl>
     <div class="legend">
       <div class="cap">線の色＝風速</div>
