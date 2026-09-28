@@ -176,7 +176,7 @@ scene.add(globe);
 /* ===== 値の面を描く係（Renderer）。色の意味は Visual Profile が決める ===== */
 const RAIN_PROFILE = {
   label: "雨の色＝降水の強さ（mm/h）",
-  stops: [[0.1,[0.82,0.87,1.00,0.12]],[1,[0.78,0.82,1.00,0.26]],[5,[0.74,0.66,1.00,0.40]],[15,[0.90,0.55,1.00,0.52]],[40,[1.00,0.43,0.78,0.62]]],   // 透け具合：下の風と地形が見えるように控えめ
+  stops: [[0.1,[0.82,0.87,1.00,0.07]],[1,[0.78,0.82,1.00,0.15]],[5,[0.74,0.66,1.00,0.24]],[15,[0.90,0.55,1.00,0.32]],[40,[1.00,0.43,0.78,0.40]]],   // 雨は背景役：風・流星・ISSなど主役の邪魔をしない濃さ
   ticks: [0.1, 1, 5, 15, 40],
   /** 値の見せ方：単位・桁・「なし」の言い方・補足 */
   present: { name: "降水", units: "mm/h", digits: 1, below: [0.1, "0.1 mm/h 未満"], missing: "データなし" },
@@ -210,14 +210,16 @@ function createScalarLayer(field, profile) {
   ctx.putImageData(img, 0, 0);
   const tex = new THREE.CanvasTexture(cv); tex.generateMipmaps = false; tex.minFilter = THREE.LinearFilter; tex.magFilter = THREE.LinearFilter;
   const mesh = new THREE.Mesh(new THREE.SphereGeometry(1.0008, 128, 96), new THREE.ShaderMaterial({
-    uniforms: { uTex: { value: tex } }, transparent: true, depthWrite: false,
+    uniforms: { uTex: { value: tex }, uOpacity: { value: 1 } }, transparent: true, depthWrite: false,
     vertexShader: `varying vec3 vPos; void main(){ vPos = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
-    fragmentShader: `uniform sampler2D uTex; varying vec3 vPos; const float PI = 3.141592653589793;
+    fragmentShader: `uniform sampler2D uTex; uniform float uOpacity; varying vec3 vPos; const float PI = 3.141592653589793;
       void main(){ vec3 n = normalize(vPos); float lat = asin(clamp(n.y,-1.0,1.0)), lon = atan(-n.z, n.x);
-        gl_FragColor = texture2D(uTex, vec2((lon+PI)/(2.0*PI), (lat+PI*0.5)/PI)); }`,
+        vec4 c = texture2D(uTex, vec2((lon+PI)/(2.0*PI), (lat+PI*0.5)/PI)); gl_FragColor = vec4(c.rgb, c.a * uOpacity); }`,
   }));
   mesh.renderOrder = 1; scene.add(mesh);
-  return { id: field.id, mesh, field, profile, set visible(v) { mesh.visible = v; }, get visible() { return mesh.visible; } };
+  /* 層の濃さのつまみ：のちに流星群やISSなど主役が出たとき、背景の層を一歩下げるための差込口 */
+  return { id: field.id, mesh, field, profile, set visible(v) { mesh.visible = v; }, get visible() { return mesh.visible; },
+    set opacity(v) { mesh.material.uniforms.uOpacity.value = v; }, get opacity() { return mesh.material.uniforms.uOpacity.value; } };
 }
 const SCALAR_LAYERS = [];   // 値の層は全部ここに並ぶ（重なり順も層が持つ）
 if (Catalog.has("rain")) SCALAR_LAYERS.push(createScalarLayer(createGridScalarField("rain"), RAIN_PROFILE));
