@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>地球儀 試作1B</title>
+<meta name="description" content="風と雨が流れるブラウザの地球儀（試作）">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  /* 単一の世界観（夜の宇宙に浮かぶ静かな地球）として暗色だけで設計 */
+  :root{
+    color-scheme: dark;
+    --space:#03050b;
+    --space-glow:#0a1224;
+    --ink:#e4e9f4;
+    --ink-soft:#9ca7bf;
+    --ink-faint:#67718a;
+    --panel:rgba(8,12,24,.84);
+    --line:rgba(150,172,226,.16);
+    --accent:#8fe3d4;
+    --warn:#e9b35a;
+    --ui:"Zen Kaku Gothic New","Hiragino Sans","Noto Sans JP",system-ui,sans-serif;
+    --mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+  }
+  [hidden]{display:none!important}
+  html,body{height:100%}
+  body{
+    margin:0;background:radial-gradient(110% 85% at 50% 40%,var(--space-glow) 0%,var(--space) 64%);
+    color:var(--ink);font-family:var(--ui);overflow:hidden;-webkit-tap-highlight-color:transparent;
+  }
+  #stage{position:fixed;inset:0;touch-action:none}
+  #stage canvas{display:block;width:100%;height:100%}
+  .brand{position:fixed;left:16px;top:calc(14px + env(safe-area-inset-top,0px));display:flex;align-items:baseline;gap:10px;user-select:none;cursor:default}
+  .brand b{font-weight:700;font-size:17px;letter-spacing:.06em}
+  .brand span{font-family:var(--mono);font-size:11px;color:var(--ink-faint);letter-spacing:.08em}
+  .meter{position:fixed;left:16px;top:calc(46px + env(safe-area-inset-top,0px));font-family:var(--mono);font-size:11px;line-height:1.55;color:var(--ink-soft);background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:8px 10px;font-variant-numeric:tabular-nums;min-width:150px}
+  .meter div{display:flex;justify-content:space-between;gap:14px}
+  .meter i{font-style:normal;color:var(--ink)}
+  /* Lens：見る帯（触れない）と、開くボタン（右上）を分ける */
+  .peek{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(12px + env(safe-area-inset-bottom,0px));
+    width:max-content;max-width:calc(100% - 32px);display:flex;align-items:center;gap:12px;padding:8px 14px;
+    background:var(--panel);border:1px solid var(--line);border-radius:999px;pointer-events:none;
+    backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transition:opacity .25s}
+  .peek.dim{opacity:.35}
+  .peek > *{min-width:0}
+  .peek-pick{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(58px + env(safe-area-inset-bottom,0px));
+    max-width:calc(100% - 32px);padding:6px 12px;border-radius:10px;background:var(--panel);border:1px solid var(--line);
+    font-size:12px;color:var(--ink-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
+  .peek-pick .num{font-family:var(--mono);color:var(--ink);font-variant-numeric:tabular-nums}
+  @media (max-width:560px){ .peek .mode small{display:none} .peek{gap:10px;padding:7px 12px} .peek .when{font-size:11px} }
+  .lens-btn{position:fixed;right:16px;top:calc(12px + env(safe-area-inset-top,0px));width:44px;height:44px;border-radius:50%;
+    display:grid;place-items:center;cursor:pointer;color:var(--ink);background:var(--panel);border:1px solid var(--line);
+    backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);padding:0}
+  .lens-btn[aria-expanded="true"]{border-color:var(--accent);color:var(--accent)}
+  .lens-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .lens-panel{position:fixed;right:16px;top:calc(64px + env(safe-area-inset-top,0px));width:min(380px,calc(100% - 32px));
+    background:var(--panel);border:1px solid var(--line);border-radius:14px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+  .mode{display:flex;flex-direction:column;gap:2px}
+  .mode b{font-size:15px;font-weight:700;letter-spacing:.04em}
+  .mode small{font-size:11px;color:var(--ink-faint);letter-spacing:.04em}
+  .when{font-family:var(--mono);font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;color:var(--ink-soft);font-variant-numeric:tabular-nums;line-height:1.45}
+  .chip{font-size:11px;letter-spacing:.06em;padding:4px 9px;border-radius:999px;white-space:nowrap;color:var(--warn);border:1px solid color-mix(in srgb,var(--warn) 45%,transparent)}
+  .detail{padding:14px;display:grid;gap:12px;max-height:58vh;overflow:auto}
+  .rows{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:12.5px;line-height:1.55}
+  .rows dt{color:var(--ink-faint)}
+  .rows dd{margin:0;color:var(--ink)}
+  .rows .num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .legend{display:grid;gap:4px}
+  .legend .cap{font-size:11px;color:var(--ink-faint);letter-spacing:.04em}
+  .legend .bar{height:6px;border-radius:3px}
+  .legend .ticks{display:flex;justify-content:space-between;font-family:var(--mono);font-size:10.5px;color:var(--ink-faint)}
+  .layers{display:grid;gap:10px;border-top:1px solid var(--line);padding-top:10px}
+  .layer{display:grid;gap:4px}
+  .layer label{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500;cursor:pointer}
+  .layer input{accent-color:var(--accent);width:16px;height:16px}
+  .layer .sub{font-size:11.5px;color:var(--ink-faint);line-height:1.55}
+  .layer .warn{color:var(--warn)}
+  .pick{font-size:12.5px;color:var(--ink-soft);border-top:1px solid var(--line);padding-top:10px}
+  .pick .num{font-family:var(--mono);color:var(--ink);font-variant-numeric:tabular-nums}
+  .note{font-size:11.5px;color:var(--ink-faint);line-height:1.6;margin:0}
+  details.lic{font-size:11px;color:var(--ink-faint)}
+  details.lic summary{cursor:pointer;color:var(--ink-soft)}
+  details.lic pre{white-space:pre-wrap;font-family:var(--mono);font-size:10.5px;line-height:1.5;margin:8px 0 0}
+  .hint{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(64px + env(safe-area-inset-bottom,0px));font-size:11.5px;color:var(--ink-faint);letter-spacing:.05em;white-space:nowrap;pointer-events:none;transition:opacity .8s}
+  .err{position:fixed;inset:auto 16px 50% 16px;text-align:center;color:var(--ink-soft);font-size:14px}
+  @media (prefers-reduced-motion: reduce){ .hint,.peek{transition:none} }
+  .chip.ok{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 45%,transparent)}
+  .loading{position:fixed;inset:auto 16px 50% 16px;text-align:center;color:var(--ink-faint);font-size:13px;letter-spacing:.06em}
+</style>
+</head>
+<body>
+<p class="loading" id="loading">データを読み込んでいます…</p>
+<div id="stage" aria-label="回して拡大できる地球"></div>
+<div class="brand" id="brand"><b>地球儀</b><span>試作1B</span></div>
+<div class="meter" id="meter" hidden>
+  <div>FPS<i id="m-fps">–</i></div>
+  <div>平均フレーム<i id="m-avg">–</i></div>
+  <div>最大フレーム<i id="m-max">–</i></div>
+  <div>表示粒子<i id="m-n">–</i></div>
+  <div>データ<i id="m-mode">–</i></div>
+</div>
+<div class="hint" id="hint">横に動かすと地軸で回る／縦で北極・南極へ／ピンチで拡大</div>
+
+<div class="peek-pick" id="peek-pick" hidden></div>
+<div class="peek" id="peek" aria-live="polite">
+    <div class="mode"><b id="d-mode">風</b><small id="d-level">地上10m</small></div>
+    <div class="when" id="d-when">–</div>
+    <span class="chip" id="d-fresh">–</span>
+</div>
+<button class="lens-btn" id="dock" aria-expanded="false" aria-controls="lens" aria-label="詳しい情報を開く">
+  <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="10" cy="10" r="7.2"/><circle cx="10" cy="10" r="3.2"/><path d="M10 2.8v2.2M10 15v2.2M2.8 10H5M15 10h2.2"/></svg>
+</button>
+<section class="lens-panel" id="lens" aria-label="Lens" hidden>
+  <div class="detail" id="detail">
+    <dl class="rows" id="d-rows"></dl>
+    <div class="legend">
+      <div class="cap">線の色＝風速</div>
+      <div class="bar" id="d-bar"></div>
+      <div class="ticks" id="d-ticks"></div>
+    </div>
+    <div class="layers" id="d-layers"></div>
+    <div class="pick" id="d-pick">地球の上をタップすると、その地点の風と雨を表示します。</div>
+    <p class="note" id="d-note"></p>
+    <details class="lic" id="d-lic" hidden><summary>風サンプルのライセンス全文（MIT License）</summary><pre id="d-mit"></pre></details>
+  </div>
+</section>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/controls/OrbitControls.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

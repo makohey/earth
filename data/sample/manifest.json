@@ -1,0 +1,32 @@
+{
+  "mode": "sample",
+  "generatedAt": null,
+  "layers": {
+    "wind-10m": {
+      "type": "flow",
+      "file": "wind.bin",
+      "format": "int16-uv",
+      "grid": { "nx": 360, "ny": 181, "lo1": 0, "la1": 90, "dx": 1, "dy": 1, "scale": 100 },
+      "meta": {
+        "title": "風", "level": "地上10m", "kind": "モデル計算", "model": "GFS 予報（初期値 +3時間）",
+        "validTime": "2014-01-31T03:00:00Z", "issuedTime": "2014-01-31T00:00:00Z",
+        "usualIntervalH": 6, "delivery": "サンプル（更新なし）", "resolution": "1° 格子（360×181）", "units": "m/s",
+        "credit": "NOAA / NCEP GFS", "sampleCredit": "サンプル整形：cambecc/earth（MIT License）",
+        "licenseFile": "LICENSE-MIT.txt"
+      }
+    },
+    "rain": {
+      "type": "scalar",
+      "file": "rain.bin",
+      "format": "uint8",
+      "grid": { "nx": 900, "ny": 450, "lon0": -180, "lat0": 90, "dx": 0.4, "dy": 0.4 },
+      "meta": {
+        "title": "降水", "level": "地表", "kind": "推定", "model": "衛星観測からの推定（IMERG Final Run V07B・30分値）",
+        "validFrom": "2021-08-29T07:30:00Z", "validTo": "2021-08-29T08:00:00Z",
+        "usualIntervalH": 0.5, "delivery": "サンプル（更新なし）", "resolution": "0.4° 格子（元は 0.1°）", "units": "mm/h",
+        "coverage": "全球（ごく一部の格子は欠測）", "credit": "NASA GPM IMERG", "sampleCredit": "サンプル入手元：pydata/xarray-data",
+        "encoding": { "type": "log1p", "max": 60, "zero": 0, "missing": 255, "levels": 253 }
+      }
+    }
+  }
+}

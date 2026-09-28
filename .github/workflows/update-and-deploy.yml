@@ -1,0 +1,60 @@
+# 地球儀：最新の GFS を取りに行き、ページと一緒に GitHub Pages へ出す
+# ・リポジトリにはデータをコミットしない（履歴が太らない）
+# ・取得に失敗しても公開は続ける（ページはサンプルで動く）
+name: データ更新と公開
+
+on:
+  schedule:
+    # GFS は 00/06/12/18 UTC の実行。+3時間の結果が出そろう頃（約4時間後）に取りに行く
+    - cron: "20 4,10,16,22 * * *"
+  workflow_dispatch:        # 手動で今すぐ実行
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 道具を入れる（GRIB2 を読む eccodes）
+        run: pip install eccodes numpy
+
+      - name: ページを組み立てる
+        run: |
+          mkdir -p _site
+          cp index.html app.js _site/
+          cp -r data _site/
+
+      - name: 最新の GFS（風・降水）を取得して変換
+        continue-on-error: true
+        run: python scripts/fetch_gfs.py --out _site/data/latest
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,5 @@
+_site/
+data/latest/
+__pycache__/
+*.grib2
+.DS_Store
