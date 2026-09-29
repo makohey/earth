@@ -31,7 +31,7 @@ NOMADS = "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_1p00.pl"
 FHOUR = 3                      # 初期時刻 +3時間（降水は 0〜3時間の平均）
 CYCLE_H = 6                    # GFS は 6時間ごと（00/06/12/18 UTC）
 LOOKBACK = 5                   # 何サイクル前までさかのぼって探すか
-UA = "globe-prototype/1B (GitHub Actions; static site, fetches ~4 times a day)"
+UA = "globe-prototype/1B (+https://github.com/makohey/earth; GitHub Actions; static site, fetches ~4 times a day)"
 
 # GRIB2 の (discipline, category, number) で見分ける（名前表の違いに左右されない）
 PARAMS = {

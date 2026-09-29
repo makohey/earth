@@ -19,7 +19,7 @@ import sys
 import urllib.request
 
 FEED = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_week.geojson"
-UA = "globe-prototype/quakes (GitHub Actions; one request per run)"
+UA = "globe-prototype/quakes (+https://github.com/makohey/earth; GitHub Actions; one request per run)"
 WINDOW_MIN = 24 * 60
 
 

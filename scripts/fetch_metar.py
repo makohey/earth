@@ -23,7 +23,7 @@ import time
 import urllib.request
 
 CACHE_URL = "https://aviationweather.gov/data/cache/metars.cache.csv.gz"
-UA = "globe-prototype/A0 (GitHub Actions; hourly cache-file fetch for a static globe page)"
+UA = "globe-prototype/A0 (+https://github.com/makohey/earth; GitHub Actions; hourly cache-file fetch for a static globe page)"
 KT = 0.514444  # ノット → m/s
 MAX_AGE_MIN = 90
 

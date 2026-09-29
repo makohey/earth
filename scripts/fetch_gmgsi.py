@@ -29,7 +29,7 @@ PRODUCT = "GMGSI_LW"
 MAX_AGE_H = 4
 STEP = 0.25                       # 配る格子（度）
 TMIN, TMAX = 180.0, 320.0          # 保存する温度の幅（K）
-UA = "globe-prototype/A1a (GitHub Actions; a few requests per run)"
+UA = "globe-prototype/A1a (+https://github.com/makohey/earth; GitHub Actions; a few requests per run)"
 
 
 def note(msg, level="notice"):
