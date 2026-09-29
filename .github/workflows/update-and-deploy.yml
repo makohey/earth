@@ -5,9 +5,9 @@ name: データ更新と公開
 
 on:
   schedule:
-    # GFS は 00/06/12/18 UTC の実行。始まって約2時間半後に起動し、
-    # 空港の観測を集めながら、その回の「+3時間」の結果が出るのを待つ（出るのは約3.5〜4.5時間後）
-    - cron: "30 2,8,14,20 * * *"
+    # GFS は 00/06/12/18 UTC の実行。+3時間の結果が出そろう頃（約4時間後）に取りに行く
+    # GitHub の時間指定は遅れたり飛んだりするので「だいたいその頃」と考える
+    - cron: "20 4,10,16,22 * * *"
   workflow_dispatch:        # 手動で今すぐ実行
   push:
     branches: [main]
@@ -20,7 +20,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 200
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
 
@@ -37,21 +37,11 @@ jobs:
           cp index.html app.js _site/
           cp -r data _site/
 
-      # 定時の実行：観測を集めながらその回の GFS を待つ（最大2時間半）
-      - name: 観測を集めながら、その回の GFS を待って変換
-        if: github.event_name == 'schedule'
-        timeout-minutes: 170
-        run: bash scripts/collect_and_wait.sh _site/data/latest 150
-
-      # 手動・コード更新のとき：待たずに、今出ている最新の回で作り直す
-      # （観測は今取るので、時計より後のものは落ち、点はほぼ出ない。定時の実行で付く）
-      - name: 今出ている最新の GFS で作り直す
-        if: github.event_name != 'schedule'
+      - name: 最新の GFS（風・降水・気圧）を取得して変換
         continue-on-error: true
-        run: |
-          python scripts/fetch_gfs.py --out _site/data/latest
-          python scripts/fetch_metar.py snapshot --out obs/metar_now.json || true
-          python scripts/fetch_metar.py attach --snapshot obs/metar_now.json --latest _site/data/latest || true
+        run: python scripts/fetch_gfs.py --out _site/data/latest
+
+      # 空港の観測（METAR）は棚に戻した（2026-09-29）。取得の仕組みは scripts/fetch_metar.py に残してある
 
       - uses: actions/configure-pages@v6
 
