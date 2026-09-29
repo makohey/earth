@@ -38,12 +38,15 @@ async function loadCatalog() {
       const decoders = {
         log1p: c => c === e.missing ? NaN : c === e.zero ? 0 : Math.expm1((c - 1) / e.levels * L),
         linear: c => c === e.missing ? NaN : c * e.scale + e.offset,
+        raw: c => c === e.missing ? NaN : c,
       };
       const dec = decoders[e.type]; for (let i = 0; i < q.length; i++) out[i] = dec(q[i]);
       return out;
     },
     /** そのデータが時計の時刻に有効か（一時点 or 期間。期間は終わりの時刻も含む） */
-    validAt(id, t) { const m = this.meta(id); if (m.validFrom) return new Date(m.validFrom) <= t && t <= new Date(m.validTo); return m.validTime ? +new Date(m.validTime) === +t : true; },
+    validAt(id, t) { const m = this.meta(id);
+      if (m.selection?.policy === "latestBefore" && m.validTime) { const v = new Date(m.validTime); return v <= t && t - v <= m.selection.maxAgeMin * 60000; }   // 時計より前で、古すぎない
+      if (m.validFrom) return new Date(m.validFrom) <= t && t <= new Date(m.validTo); return m.validTime ? +new Date(m.validTime) === +t : true; },
     grid(id) { return { grid: manifest.layers[id].grid, raw: new Int16Array(bufs[id]), meta: this.meta(id) }; },
     /** 物の層（Feature）の中身。行の形のまま返す */
     rows(id) { return (this._rows ||= {})[id] ||= JSON.parse(new TextDecoder().decode(bufs[id])); },
@@ -195,6 +198,7 @@ const RAIN_PROFILE = {
   present: { name: "降水", units: "mm/h", digits: 1, below: [0.1, "0.1 mm/h 未満"], missing: "データなし" },
 };
 function presentValue(layer, v) {
+  if (layer.profile.presentFn) return layer.profile.presentFn(layer, v);
   const p = layer.profile.present, m = layer.field.meta;
   const txt = v === null ? p.missing : v < p.below[0] ? p.below[1] : `${v.toFixed(p.digits)} ${p.units}`;
   const span = m.validFrom ? `${m.validFrom.slice(0,16).replace("T"," ")}〜${m.validTo.slice(11,16)} UTC` : "";
@@ -222,19 +226,33 @@ function createScalarLayer(field, profile) {
   }
   ctx.putImageData(img, 0, 0);
   const tex = new THREE.CanvasTexture(cv); tex.generateMipmaps = false; tex.minFilter = THREE.LinearFilter; tex.magFilter = THREE.LinearFilter;
-  const mesh = new THREE.Mesh(new THREE.SphereGeometry(1.0008, 128, 96), new THREE.ShaderMaterial({
+  const mesh = new THREE.Mesh(new THREE.SphereGeometry(profile.radius || 1.0008, 128, 96), new THREE.ShaderMaterial({
     uniforms: { uTex: { value: tex }, uOpacity: { value: 1 } }, transparent: true, depthWrite: false,
     vertexShader: `varying vec3 vPos; void main(){ vPos = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
     fragmentShader: `uniform sampler2D uTex; uniform float uOpacity; varying vec3 vPos; const float PI = 3.141592653589793;
       void main(){ vec3 n = normalize(vPos); float lat = asin(clamp(n.y,-1.0,1.0)), lon = atan(-n.z, n.x);
         vec4 c = texture2D(uTex, vec2((lon+PI)/(2.0*PI), (lat+PI*0.5)/PI)); gl_FragColor = vec4(c.rgb, c.a * uOpacity); }`,
   }));
-  mesh.renderOrder = 1; scene.add(mesh);
+  mesh.renderOrder = profile.order ?? 1; scene.add(mesh);
   /* 層の濃さのつまみ：のちに流星群やISSなど主役が出たとき、背景の層を一歩下げるための差込口 */
   return { id: field.id, mesh, field, profile, set visible(v) { mesh.visible = v; }, get visible() { return mesh.visible; },
     set opacity(v) { mesh.material.uniforms.uOpacity.value = v; }, get opacity() { return mesh.material.uniforms.uOpacity.value; } };
 }
 const SCALAR_LAYERS = [];   // 値の層は全部ここに並ぶ（重なり順も層が持つ）
+/* 衛星赤外（雲）：値は 0〜254 の明るさ段階。大きいほど冷たい＝高い・厚い雲。温度への換算はしていない */
+const CLOUD_PROFILE = {
+  label: "雲の白さ＝赤外で見た冷たさ（白いほど高い・厚い雲）",
+  stops: [[118,[0.80,0.85,0.95,0.00]],[140,[0.84,0.88,0.96,0.28]],[165,[0.90,0.93,0.99,0.55]],[195,[0.96,0.98,1.00,0.78]],[235,[1.00,1.00,1.00,0.90]]],
+  ticks: ["低い・薄い", "", "", "", "高い・厚い"],
+  radius: 1.0006, order: 0.9,          // 雨（モデル）より下、地面より上
+  present: { name: "衛星赤外", units: "", digits: 0, below: [-Infinity, ""], missing: "データなし" },
+  presentFn(layer, v) {
+    const m = layer.field.meta, age = Math.round((Clock.now() - new Date(m.validTime)) / 60000);
+    const txt = v === null ? "データなし（衛星の写らない所）" : v >= 195 ? "高い・厚い雲" : v >= 150 ? "雲" : v >= 125 ? "薄い雲か低い雲" : "雲は少ない（低い雲・霧は見えにくい）";
+    return `衛星 <span class="num">${txt}</span> <span style="color:var(--ink-faint)">（衛星・${age}分前の画像）</span>`;
+  },
+};
+if (DEV && Catalog.has("cloud-ir")) SCALAR_LAYERS.push(createScalarLayer(createGridScalarField("cloud-ir"), CLOUD_PROFILE));
 if (Catalog.has("rain")) SCALAR_LAYERS.push(createScalarLayer(createGridScalarField("rain"), RAIN_PROFILE));
 
 /* ===== 値の場を「線」で見せる係（等値線）。同じ Scalar Field から、雨は面、気圧は線 ===== */
@@ -588,7 +606,7 @@ function layerBlock(id, opts) {
   const legend = opts.profile && opts.profile.stops ? `<div class="legend"><div class="cap">${opts.profile.label}</div><div class="bar" style="background:linear-gradient(90deg, ${opts.profile.stops.map(([s, c], k) => `rgba(${c.slice(0,3).map(x => Math.round(x*255)).join(",")},${Math.max(c[3], .5)}) ${(k / (opts.profile.stops.length - 1) * 100).toFixed(0)}%`).join(", ")})"></div><div class="ticks">${opts.profile.ticks.map(v => `<span>${v}</span>`).join("")}</div></div>` : "";
   return `<div class="layer">
     <label><input type="checkbox" id="t-${id}" ${opts.visible ? "checked" : ""}> ${m.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${m.kind}</span></label>
-    <div class="sub">${fmtSpan(m)}・${m.resolution || ""}${m.coverage ? "・" + m.coverage : ""}<br>出典：${m.credit}${m.sampleCredit ? "（" + m.sampleCredit + "）" : ""}</div>
+    <div class="sub">${fmtSpan(m)}${m.selection ? `（時計の <span class="num">${Math.round((Clock.now() - new Date(m.validTime)) / 60000)}</span>分前の画像）` : ""}・${m.resolution || ""}${m.coverage ? "・" + m.coverage : ""}${m.caution ? "<br>" + m.caution : ""}<br>出典：${m.credit}${m.sampleCredit ? "（" + m.sampleCredit + "）" : ""}</div>
     ${ok ? "" : `<div class="sub warn">地球儀の時計（${fmtUTC(Clock.now())}）とは別の時刻のデータです</div>`}
     ${legend}</div>`;
 }
