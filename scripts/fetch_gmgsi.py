@@ -71,7 +71,7 @@ def pick(clock):
             continue
         if keys:
             note(f"GMGSI 候補 {prefix}: " + ", ".join(f"{k.split('/')[-1]}({s//1024}KB)" for k, s in keys[:6]))
-            nc = [k for k in keys if not k.endswith(".html")]
+            nc = [k for k, _ in keys if not k.endswith(".html")]
             if nc:
                 return t, nc[0]
         time.sleep(1)
