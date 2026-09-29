@@ -31,3 +31,4 @@ jobs:
         with:
           path: obs
           key: metar-${{ steps.key.outputs.hour }}
+
