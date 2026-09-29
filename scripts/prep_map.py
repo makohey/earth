@@ -58,3 +58,32 @@ for f in json.load(open(os.path.join(SRC, "ne_50m_admin_0_countries.geojson")))[
 json.dump({"lines": out}, open(os.path.join(OUT, "boundaries.json"), "w"), ensure_ascii=False, separators=(",", ":"))
 json.dump({"labels": labels}, open(os.path.join(OUT, "labels.json"), "w"), ensure_ascii=False, separators=(",", ":"))
 print(len(out), "lines", len(labels), "labels")
+
+# ---- 陸の氷（氷河・氷床・南極の棚氷）：動かない地図として一枚の画像にする ----
+try:
+    from PIL import Image, ImageDraw
+    W, H = 2048, 1024
+    im = Image.new("L", (W, H), 0)
+    dr = ImageDraw.Draw(im)
+    X = lambda lo: (lo + 180) / 360 * W
+    Y = lambda la: (90 - la) / 180 * H
+    def rings(geom):
+        if geom["type"] == "Polygon":
+            yield geom["coordinates"]
+        elif geom["type"] == "MultiPolygon":
+            yield from geom["coordinates"]
+    n = 0
+    for name in ["ne_50m_glaciated_areas", "ne_50m_antarctic_ice_shelves_polys"]:
+        for f in json.load(open(os.path.join(SRC, name + ".geojson")))["features"]:
+            for poly in rings(f["geometry"]):
+                outer, holes = poly[0], poly[1:]
+                dr.polygon([(X(lo), Y(la)) for lo, la in outer], fill=255)
+                for h in holes:
+                    dr.polygon([(X(lo), Y(la)) for lo, la in h], fill=0)
+                n += 1
+    # 南極の内陸（氷床）はデータによっては極まで閉じていないので、南緯80度より南は氷として塗る
+    dr.rectangle([0, Y(-80), W, H], fill=255)
+    im.save(os.path.join(OUT, "land_ice.png"), optimize=True)
+    print(n, "ice polygons")
+except FileNotFoundError as e:
+    print("氷の地図は作らなかった:", e)

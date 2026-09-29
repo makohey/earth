@@ -39,6 +39,7 @@ PARAMS = {
     (0, 2, 3): "v",            # VGRD
     (0, 1, 7): "prate",        # PRATE  kg m-2 s-1
     (0, 3, 1): "prmsl",        # PRMSL  海面更正気圧 Pa
+    (10, 2, 0): "icec",        # ICEC   海氷の割合 0〜1
 }
 
 RAIN_MAX = 60.0                # mm/h（これ以上は同じ色）
@@ -60,7 +61,7 @@ def url_for(cycle: dt.datetime) -> str:
     q = {
         "dir": f"/gfs.{d}/{h}/atmos",
         "file": f"gfs.t{h}z.pgrb2.1p00.f{FHOUR:03d}",
-        "var_UGRD": "on", "var_VGRD": "on", "var_PRATE": "on", "var_PRMSL": "on", "lev_mean_sea_level": "on",
+        "var_UGRD": "on", "var_VGRD": "on", "var_PRATE": "on", "var_PRMSL": "on", "lev_mean_sea_level": "on", "var_ICEC": "on",
         "lev_10_m_above_ground": "on", "lev_surface": "on",
     }
     return NOMADS + "?" + urllib.parse.urlencode(q)
@@ -188,6 +189,12 @@ def build(fields: dict, out: str, source_url: str | None):
         f.write(encode_wind(u["a"], v["a"]))
     with open(os.path.join(out, "rain.bin"), "wb") as f:
         f.write(encode_rain(pr["a"]))
+    ic = fields.get("icec")                       # 海氷も無くてよい
+    if ic is not None:
+        a = ic["a"]
+        q = np.where(np.isnan(a), 255, np.clip(np.round(a * 100), 0, 100)).astype("uint8")
+        with open(os.path.join(out, "seaice.bin"), "wb") as f:
+            f.write(q.tobytes())
     ps = fields.get("prmsl")                      # 気圧は無くても風と雨は出す
     if ps is not None:
         with open(os.path.join(out, "pressure.bin"), "wb") as f:
@@ -242,10 +249,24 @@ def build(fields: dict, out: str, source_url: str | None):
                 "encoding": {"type": "linear", "scale": 0.1, "offset": 1000, "missing": -32768},
             },
         }
+    if ic is not None:
+        manifest["layers"]["sea-ice"] = {
+            "type": "scalar", "file": "seaice.bin", "format": "uint8",
+            "grid": {"nx": ic["nx"], "ny": ic["ny"], "lon0": ic["lon0"], "lat0": ic["lat0"],
+                     "dx": ic["dx"], "dy": ic["dy"], "registration": "point"},
+            "meta": {
+                "title": "海氷", "level": "海面", "kind": "モデル計算",
+                "model": f"GFS 予報（海氷の割合・初期値 +{FHOUR}時間）",
+                "validTime": iso(ic["to"]), "issuedTime": iso(ic["issued"]),
+                "usualIntervalH": CYCLE_H, "delivery": "自動取得（GitHub Actions・約6時間ごと）",
+                "resolution": res(ic), "units": "%", "coverage": "全球の海（陸はデータなし）", "credit": CREDIT,
+                "encoding": {"type": "raw", "missing": 255},
+            },
+        }
     with open(os.path.join(out, "manifest.json"), "w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=1)
     log("書き出し完了:", out, "初期時刻", iso(u["issued"]), "有効時刻", iso(u["to"]))
-    print(f"::notice::GFS 書き出し: 初期時刻 {iso(u['issued'])}／有効時刻 {iso(u['to'])}／気圧 {'あり' if 'prmsl' in fields else 'なし'}", flush=True)
+    print(f"::notice::GFS 書き出し: 初期時刻 {iso(u['issued'])}／有効時刻 {iso(u['to'])}／気圧 {'あり' if 'prmsl' in fields else 'なし'}／海氷 {'あり' if 'icec' in fields else 'なし'}", flush=True)
 
 
 def main():

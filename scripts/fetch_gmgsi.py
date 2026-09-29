@@ -196,7 +196,7 @@ def _main():
             "resolution": f"{STEP}° 格子に整形", "units": "明るさ段階（0〜254）",
             "coverage": f"全球の約{cover*100:.0f}%（極に近い所は写らない）",
             "credit": "NOAA/NESDIS GMGSI（GOES・Himawari・Meteosat などの合成）。NOAA Open Data Dissemination より",
-            "caution": "雲量や雨ではなく、赤外で見た温度です。低い雲や霧は地表と温度が近く、見えにくいことがあります",
+            "caution": "雲量や雨ではなく、赤外で見た冷たさです。低い雲や霧は地表と温度が近く、見えにくいことがあります。ごく薄い斜線の範囲は衛星の観測範囲外（晴れという意味ではありません）",
             "encoding": {"type": "raw", "missing": 255},
         },
     }
