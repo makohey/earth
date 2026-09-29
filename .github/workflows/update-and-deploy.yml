@@ -43,6 +43,28 @@ jobs:
         continue-on-error: true
         run: python scripts/fetch_gfs.py --out _site/data/latest
 
+      - name: 時計の時刻を読む
+        id: clock
+        continue-on-error: true
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          m = json.load(open("_site/data/latest/manifest.json"))
+          t = m["layers"]["wind-10m"]["meta"]["validTime"]
+          print("hour=" + t[0:4] + t[5:7] + t[8:10] + t[11:13])
+          PY
+
+      - name: その時刻に保存しておいた空港の観測を探す
+        if: steps.clock.outputs.hour != ''
+        uses: actions/cache/restore@v6
+        with:
+          path: obs
+          key: metar-${{ steps.clock.outputs.hour }}
+
+      - name: 空港の観測を地球儀に付ける（時計より後の観測は落とす）
+        continue-on-error: true
+        run: python scripts/fetch_metar.py attach --snapshot obs/metar.json --latest _site/data/latest
+
       - uses: actions/configure-pages@v6
 
       - uses: actions/upload-pages-artifact@v5

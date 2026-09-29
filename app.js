@@ -42,10 +42,14 @@ async function loadCatalog() {
     /** そのデータが時計の時刻に有効か（一時点 or 期間。期間は終わりの時刻も含む） */
     validAt(id, t) { const m = this.meta(id); if (m.validFrom) return new Date(m.validFrom) <= t && t <= new Date(m.validTo); return m.validTime ? +new Date(m.validTime) === +t : true; },
     grid(id) { return { grid: manifest.layers[id].grid, raw: new Int16Array(bufs[id]), meta: this.meta(id) }; },
+    /** 物の層（Feature）の中身。行の形のまま返す */
+    rows(id) { return (this._rows ||= {})[id] ||= JSON.parse(new TextDecoder().decode(bufs[id])); },
   };
 }
 
 let Catalog;
+/* 開発中の層は ?dev=1 のときだけ出す（公開中の地球儀を壊さずに本物のデータで確かめるため） */
+const DEV = new URLSearchParams(location.search).get("dev") === "1";
 (async () => {
 try { Catalog = await loadCatalog(); }
 catch (e) { document.getElementById("loading").textContent = "データを読み込めませんでした（" + e.message + "）"; return; }
@@ -224,6 +228,77 @@ function createScalarLayer(field, profile) {
 const SCALAR_LAYERS = [];   // 値の層は全部ここに並ぶ（重なり順も層が持つ）
 if (Catalog.has("rain")) SCALAR_LAYERS.push(createScalarLayer(createGridScalarField("rain"), RAIN_PROFILE));
 
+/* ===== 物の問い合わせ口（Feature Interface） =====
+   features(time) → [{ lon, lat, time, props }]
+   どれを返すかは、目録に書かれた「時間の選び方（selection policy）」で決める。
+   latestBefore：時計より前で一番新しいもの（未来側は拾わない）、ただし maxAge より古いものは出さない */
+const SELECTION = {
+  latestBefore(rows, F, time, pol) {
+    const tmin = Math.floor(time.getTime() / 60000), best = new Map();
+    for (const r of rows) {
+      const t = r[F.tmin]; if (t > tmin || t < tmin - pol.maxAgeMin) continue;
+      const b = best.get(r[F.id]); if (!b || b[F.tmin] < t) best.set(r[F.id], r);
+    }
+    return [...best.values()];
+  },
+};
+function createFeatureSource(id) {
+  const meta = Catalog.meta(id), { fields, rows } = Catalog.rows(id);
+  const F = Object.fromEntries(fields.map((f, i) => [f, i]));
+  const pol = meta.selection || { policy: "latestBefore", maxAgeMin: 90 };
+  return {
+    id, meta,
+    features(time) {
+      return SELECTION[pol.policy](rows, F, time, pol).map(r => ({
+        lon: r[F.lon], lat: r[F.lat], time: new Date(r[F.tmin] * 60000),
+        props: Object.fromEntries(fields.map((f, i) => [f, r[i]])),
+      }));
+    },
+  };
+}
+
+/* ===== 観測の点を描く係。点＝観測、という形の約束。拡大したときだけ静かに出る ===== */
+const OBS_PROFILE = {
+  color: [1.00, 0.91, 0.76], size: 5.0,
+  showFrom: 2.5, fullAt: 1.9,        // カメラの距離（地球の半径=1）。これより近づくと出てくる
+  maxAgeMin: 90,
+};
+function createPointLayer(source, profile) {
+  const feats = source.features(Clock.now());
+  const pos = new Float32Array(feats.length * 3), age = new Float32Array(feats.length);
+  feats.forEach((f, i) => { toXYZ(f.lat, f.lon, 1.0045, pos, i * 3); age[i] = (Clock.now() - f.time) / 60000 / profile.maxAgeMin; });
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(pos, 3)); geo.setAttribute("aAge", new THREE.BufferAttribute(age, 1));
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { uSize: { value: profile.size * renderer.getPixelRatio() }, uShow: { value: 0 }, uOpacity: { value: 1 }, uColor: { value: new THREE.Vector3(...profile.color) } },
+    transparent: true, depthWrite: false,
+    vertexShader: `attribute float aAge; uniform float uSize; varying float vAge;
+      void main(){ vAge = aAge; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); gl_PointSize = uSize; }`,
+    fragmentShader: `uniform float uShow; uniform float uOpacity; uniform vec3 uColor; varying float vAge;
+      void main(){ vec2 d = gl_PointCoord - 0.5; float r = length(d); if (r > 0.5) discard;
+        float ring = smoothstep(0.5, 0.36, r) * (0.55 + 0.45 * smoothstep(0.30, 0.18, r));
+        float a = ring * uShow * uOpacity * mix(1.0, 0.45, clamp(vAge, 0.0, 1.0));
+        if (a < 0.01) discard; gl_FragColor = vec4(uColor, a); }`,
+  });
+  const pts = new THREE.Points(geo, mat); pts.renderOrder = 3; scene.add(pts);
+  let on = true;
+  return {
+    id: source.id, source, profile, feats, mat,
+    set visible(v) { on = v; pts.visible = v; }, get visible() { return on; },
+    /** 拡大の度合いで出し入れ（毎フレーム） */
+    tick(dist) { const t = Math.min(1, Math.max(0, (profile.showFrom - dist) / (profile.showFrom - profile.fullAt))); mat.uniforms.uShow.value = t; },
+    get shown() { return on && mat.uniforms.uShow.value > 0.05; },
+    /** 地点の近くの観測を一つ返す（度） */
+    nearest(lon, lat, maxDeg) {
+      let best = null, bd = maxDeg;
+      for (const f of feats) { const d = Math.hypot((((f.lon - lon + 540) % 360) - 180) * Math.cos(lat * D2R), f.lat - lat); if (d < bd) { bd = d; best = f; } }
+      return best;
+    },
+  };
+}
+const FEATURE_LAYERS = [];
+if (DEV && Catalog.has("metar")) FEATURE_LAYERS.push(createPointLayer(createFeatureSource("metar"), OBS_PROFILE));
+
 (function addCoast() {
   const seg = [];
   for (const line of Catalog.paths("coast")) for (let k = 1; k < line.length; k++) seg.push(line[k-1], line[k]);
@@ -399,7 +474,18 @@ function layerBlock(id, opts) {
     ${ok ? "" : `<div class="sub warn">地球儀の時計（${fmtUTC(Clock.now())}）とは別の時刻のデータです</div>`}
     ${legend}</div>`;
 }
-document.getElementById("d-layers").innerHTML = SCALAR_LAYERS.map(l => layerBlock(l.id, { visible: l.visible, profile: l.profile })).join("");
+/* 物の層の説明：データ時刻は一つではないので、時計との差の幅で見せる */
+function featureBlock(l) {
+  const m = l.source.meta, ages = l.feats.map(f => (Clock.now() - f.time) / 60000).sort((a, b) => a - b);
+  const med = ages.length ? Math.round(ages[ages.length >> 1]) : null;
+  return `<div class="layer">
+    <label><input type="checkbox" id="t-${l.id}" ${l.visible ? "checked" : ""}> ${m.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${m.kind}</span></label>
+    <div class="sub">時計の前 ${m.selection.maxAgeMin}分以内で一番新しい観測・<span class="num">${ages.length}</span>地点${med !== null ? `（まん中は <span class="num">${med}</span>分前）` : ""}<br>${m.coverage}<br>拡大すると点が出ます・点をタップで観測値<br>出典：${m.credit}</div>
+    ${ages.length ? "" : `<div class="sub warn">時計の時刻に合う観測がありません</div>`}</div>`;
+}
+document.getElementById("d-layers").innerHTML = SCALAR_LAYERS.map(l => layerBlock(l.id, { visible: l.visible, profile: l.profile })).join("")
+  + FEATURE_LAYERS.map(featureBlock).join("");
+for (const l of FEATURE_LAYERS) document.getElementById("t-" + l.id).addEventListener("change", e => { l.visible = e.target.checked; });
 for (const l of SCALAR_LAYERS) document.getElementById("t-" + l.id).addEventListener("change", e => { l.visible = e.target.checked; updateChip(); });
 /** 見る帯の札：いまの時計の時刻が「どれくらい前／後」か。止まっていたら知らせる */
 function updateChip() {
@@ -430,6 +516,14 @@ function showPick(html) { peekPick.innerHTML = html; peekPick.hidden = false; cl
 /* 地点タップ：問い合わせ口から、その地点の風を聞く */
 const raycaster = new THREE.Raycaster(), ndc = new THREE.Vector2();
 const DIRS = ["北","北北東","北東","東北東","東","東南東","南東","南南東","南","南南西","南西","西南西","西","西北西","北西","北北西"];
+/** 観測の見せ方：何分前の、どこの、実際に測った値か */
+function presentObs(f) {
+  const p = f.props, age = Math.round((Clock.now() - f.time) / 60000), bits = [];
+  if (p.temp !== null) bits.push(`気温 <span class="num">${p.temp.toFixed(0)}°C</span>`);
+  if (p.wspd !== null) bits.push(`風 ${p.wdir === "VRB" ? "向き不定" : p.wdir !== null && p.wspd > 0 ? DIRS[Math.round(p.wdir / 22.5) % 16] : ""} <span class="num">${p.wspd.toFixed(1)} m/s</span>${p.wgst ? `（最大 <span class="num">${p.wgst.toFixed(0)}</span>）` : ""}`);
+  if (p.wx) bits.push(`天気 <span class="num">${p.wx}</span>`);
+  return `<span class="num">${p.id}</span> ${bits.join("　")} <span style="color:var(--ink-faint)">（観測・${age}分前）</span>`;
+}
 let down = null;
 renderer.domElement.addEventListener("pointerdown", e => { down = [e.clientX, e.clientY]; hideHint(); });
 renderer.domElement.addEventListener("pointerup", e => {
@@ -442,7 +536,8 @@ renderer.domElement.addEventListener("pointerup", e => {
   const [u, v] = field.sample(lo, la, Clock.now()), sp = Math.hypot(u, v), from = (Math.atan2(-u, -v) / D2R + 360) % 360;
   const ll = `${Math.abs(la).toFixed(1)}°${la >= 0 ? "N" : "S"} ${Math.abs(lo).toFixed(1)}°${lo >= 0 ? "E" : "W"}`;
   document.getElementById("d-pick").innerHTML = `<span class="num">${ll}</span>　風速 <span class="num">${sp.toFixed(1)} m/s</span>　${DIRS[Math.round(from / 22.5) % 16]}の風 <span style="color:var(--ink-faint)">（${wm.kind}・格子から補間）</span>`
-    + SCALAR_LAYERS.filter(l => l.visible).map(l => "<br>" + presentValue(l, l.field.sample(lo, la, Clock.now()))).join("");
+    + SCALAR_LAYERS.filter(l => l.visible).map(l => "<br>" + presentValue(l, l.field.sample(lo, la, Clock.now()))).join("")
+    + FEATURE_LAYERS.filter(l => l.shown).map(l => { const f = l.nearest(lo, la, 0.5 + 1.2 * (camera.position.length() - 1)); return f ? "<br>" + presentObs(f) : ""; }).join("");
   showPick(document.getElementById("d-pick").innerHTML.replace(/<span style="color:var\(--ink-faint\)">[^<]*<\/span>/g, "").replace(/<br>/g, "　"));
 });
 const hint = document.getElementById("hint"); let hintGone = false;
@@ -462,7 +557,9 @@ function loop(now) {
   const dt = Math.min(now - last, 100); last = now;
   frames.push(dt); if (frames.length > 120) frames.shift();
   VisualParticles.step(Math.min(dt / 16.667, 3));
-  Spin.tick(); controls.update(); renderer.render(scene, camera);
+  Spin.tick(); controls.update();
+  for (const l of FEATURE_LAYERS) l.tick(camera.position.length());
+  renderer.render(scene, camera);
   if (!meter.hidden && now - meterAt > 400) {
     meterAt = now; const avg = frames.reduce((a, b) => a + b, 0) / frames.length;
     document.getElementById("m-fps").textContent = (1000 / avg).toFixed(0);
