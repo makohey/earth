@@ -138,6 +138,16 @@ def encode(g):
 
 
 def main():
+    try:
+        _main()
+    except SystemExit:
+        raise
+    except BaseException as e:
+        note(f"GMGSI 失敗: {type(e).__name__}: {e}"[:900], "error")
+        raise
+
+
+def _main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--latest", required=True)
     args = ap.parse_args()
@@ -149,15 +159,20 @@ def main():
         note(f"時計 {iso(clock)} 以前 {MAX_AGE_H} 時間に GMGSI の画像がありません", "warning")
         return
     tmp = os.path.join(args.latest, "_gmgsi.nc")
+    try:
+        body = get(f"{BUCKET}/{key}", timeout=300)
+    except BaseException as e:
+        note(f"GMGSI 取得に失敗: {type(e).__name__} {e}", "error"); raise
     with open(tmp, "wb") as f:
-        f.write(get(f"{BUCKET}/{key}", timeout=300))
+        f.write(body)
+    note(f"GMGSI 取得: {len(body)//1024} KB、先頭 {body[:8]!r}")
     try:
         data, lat, lon, attrs = read(tmp)
         k = to_kelvin(data, attrs)
         g, nx, ny = regrid(k, lat, lon)
     except BaseException as e:
         import traceback
-        note("GMGSI 変換に失敗: " + " | ".join(traceback.format_exception(e))[-900:].replace("\n", " "), "error")
+        note("GMGSI 変換に失敗: " + " | ".join(traceback.format_exception(e))[-900:].replace("\n", " ").replace("::", ":"), "error")
         raise
     finally:
         os.remove(tmp)
