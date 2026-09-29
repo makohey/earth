@@ -33,9 +33,12 @@ async function loadCatalog() {
     paths(id) { const raw = new Int16Array(mapBufs[id]), s = 100, out = []; let cur = []; for (let i = 0; i < raw.length; i += 2) { if (raw[i] === 32767) { if (cur.length) out.push(cur); cur = []; continue; } cur.push([raw[i] / s, raw[i+1] / s]); } if (cur.length) out.push(cur); return out; },
     /** 保存形式（圧縮）を物理量に戻す係。端子はこの形式を知らない */
     scalarValues(id) {
-      const q = new Uint8Array(bufs[id]), e = this.meta(id).encoding, out = new Float32Array(q.length);
-      const L = Math.log1p(e.max);
-      const decoders = { log1p: c => c === e.missing ? NaN : c === e.zero ? 0 : Math.expm1((c - 1) / e.levels * L) };
+      const e = this.meta(id).encoding, q = e.type === "linear" ? new Int16Array(bufs[id]) : new Uint8Array(bufs[id]), out = new Float32Array(q.length);
+      const L = Math.log1p(e.max || 1);
+      const decoders = {
+        log1p: c => c === e.missing ? NaN : c === e.zero ? 0 : Math.expm1((c - 1) / e.levels * L),
+        linear: c => c === e.missing ? NaN : c * e.scale + e.offset,
+      };
       const dec = decoders[e.type]; for (let i = 0; i < q.length; i++) out[i] = dec(q[i]);
       return out;
     },
@@ -233,6 +236,44 @@ function createScalarLayer(field, profile) {
 }
 const SCALAR_LAYERS = [];   // 値の層は全部ここに並ぶ（重なり順も層が持つ）
 if (Catalog.has("rain")) SCALAR_LAYERS.push(createScalarLayer(createGridScalarField("rain"), RAIN_PROFILE));
+
+/* ===== 値の場を「線」で見せる係（等値線）。同じ Scalar Field から、雨は面、気圧は線 ===== */
+const PRESSURE_PROFILE = {
+  label: "気圧配置（等圧線・4 hPa ごと）", step: 4, bold: 20,     // 1000・1020 hPa…を少し濃く
+  color: [0.86, 0.88, 1.00], opacity: 0.30, boldOpacity: 0.48,
+  modes: ["both"],                                              // 既定では「重ねる」のときだけ
+  present: { name: "気圧", units: "hPa", digits: 0, below: [-Infinity, ""], missing: "データなし" },
+};
+function createContourLayer(field, profile, id) {
+  const g = Catalog.gridInfo(id), vals = Catalog.scalarValues(id), nx = g.nx, ny = g.ny;
+  const at = (i, j) => vals[j * nx + ((i % nx) + nx) % nx];
+  const thin = [], bold = [], tmp = [0, 0, 0];
+  const put = (arr, lon, lat) => { toXYZ(lat, lon, 1.0021, tmp, 0); arr.push(tmp[0], tmp[1], tmp[2]); };
+  // マーチング・スクエア：升目の四隅の値から、等値線が横切る辺を見つけて線分をつなぐ
+  for (let j = 0; j < ny - 1; j++) for (let i = 0; i < nx; i++) {
+    const a = at(i, j), b = at(i + 1, j), c = at(i + 1, j + 1), d = at(i, j + 1);
+    if ([a, b, c, d].some(Number.isNaN)) continue;
+    const lo = Math.min(a, b, c, d), hi = Math.max(a, b, c, d);
+    for (let L = Math.ceil(lo / profile.step) * profile.step; L <= hi; L += profile.step) {
+      const pts = [];
+      const edge = (v1, v2, i1, j1, i2, j2) => { if ((v1 < L) !== (v2 < L)) { const t = (L - v1) / (v2 - v1); pts.push([g.lon0 + (i1 + (i2 - i1) * t) * g.dx, g.lat0 - (j1 + (j2 - j1) * t) * g.dy]); } };
+      edge(a, b, i, j, i + 1, j); edge(b, c, i + 1, j, i + 1, j + 1); edge(c, d, i + 1, j + 1, i, j + 1); edge(d, a, i, j + 1, i, j);
+      const arr = L % profile.bold === 0 ? bold : thin;
+      for (let k = 0; k + 1 < pts.length; k += 2) { put(arr, pts[k][0], pts[k][1]); put(arr, pts[k+1][0], pts[k+1][1]); }
+    }
+  }
+  const group = new THREE.Group(); group.renderOrder = 1.8; scene.add(group);
+  const mats = [];
+  for (const [arr, op] of [[thin, profile.opacity], [bold, profile.boldOpacity]]) {
+    const geo = new THREE.BufferGeometry(); geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(arr), 3));
+    const m = new THREE.LineBasicMaterial({ color: new THREE.Color(...profile.color), transparent: true, opacity: op, depthWrite: false });
+    m.userData.base = op; mats.push(m); group.add(new THREE.LineSegments(geo, m));
+  }
+  let op = 1;
+  return { id, field, profile, set visible(v) { group.visible = v; }, get visible() { return group.visible; },
+    set opacity(v) { op = v; for (const m of mats) m.opacity = m.userData.base * v; }, get opacity() { return op; } };
+}
+if (DEV && Catalog.has("pressure")) SCALAR_LAYERS.push(createContourLayer(createGridScalarField("pressure"), PRESSURE_PROFILE, "pressure"));
 
 /* ===== 物の問い合わせ口（Feature Interface） =====
    features(time) → [{ lon, lat, time, props }]
@@ -544,7 +585,7 @@ document.getElementById("d-ticks").innerHTML = [0, 10, 20, 30].map(v => `<span>$
 const fmtSpan = m => m.validFrom ? `${m.validFrom.slice(0,16).replace("T"," ")}〜${m.validTo.slice(11,16)} UTC` : `${m.validTime.slice(0,16).replace("T"," ")} UTC`;
 function layerBlock(id, opts) {
   const m = Catalog.meta(id), ok = Catalog.validAt(id, Clock.now());
-  const legend = opts.profile ? `<div class="legend"><div class="cap">${opts.profile.label}</div><div class="bar" style="background:linear-gradient(90deg, ${opts.profile.stops.map(([s, c], k) => `rgba(${c.slice(0,3).map(x => Math.round(x*255)).join(",")},${Math.max(c[3], .5)}) ${(k / (opts.profile.stops.length - 1) * 100).toFixed(0)}%`).join(", ")})"></div><div class="ticks">${opts.profile.ticks.map(v => `<span>${v}</span>`).join("")}</div></div>` : "";
+  const legend = opts.profile && opts.profile.stops ? `<div class="legend"><div class="cap">${opts.profile.label}</div><div class="bar" style="background:linear-gradient(90deg, ${opts.profile.stops.map(([s, c], k) => `rgba(${c.slice(0,3).map(x => Math.round(x*255)).join(",")},${Math.max(c[3], .5)}) ${(k / (opts.profile.stops.length - 1) * 100).toFixed(0)}%`).join(", ")})"></div><div class="ticks">${opts.profile.ticks.map(v => `<span>${v}</span>`).join("")}</div></div>` : "";
   return `<div class="layer">
     <label><input type="checkbox" id="t-${id}" ${opts.visible ? "checked" : ""}> ${m.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${m.kind}</span></label>
     <div class="sub">${fmtSpan(m)}・${m.resolution || ""}${m.coverage ? "・" + m.coverage : ""}<br>出典：${m.credit}${m.sampleCredit ? "（" + m.sampleCredit + "）" : ""}</div>
@@ -580,7 +621,7 @@ if (MapLayer) {
   document.getElementById("detail").insertBefore(box, document.getElementById("d-rows"));
   const setMode = k => {
     const m = MODES[k]; VisualParticles.visible = m.wind; MapLayer.visible = m.map; globe.material.uniforms.uNight.value = m.night;
-    for (const l of SCALAR_LAYERS) { l.visible = m.scalar; const cb = document.getElementById("t-" + l.id); if (cb) cb.checked = m.scalar; }
+    for (const l of SCALAR_LAYERS) { const v = m.scalar && (!l.profile.modes || l.profile.modes.includes(k)); l.visible = v; const cb = document.getElementById("t-" + l.id); if (cb) cb.checked = v; }
     box.querySelectorAll("[data-mode]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.mode === k)));
     box.querySelector(".viewbox").hidden = !m.map;
     document.getElementById("d-mode").textContent = m.wind ? "風" : "地球儀";

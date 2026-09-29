@@ -38,6 +38,7 @@ PARAMS = {
     (0, 2, 2): "u",            # UGRD
     (0, 2, 3): "v",            # VGRD
     (0, 1, 7): "prate",        # PRATE  kg m-2 s-1
+    (0, 3, 1): "prmsl",        # PRMSL  海面更正気圧 Pa
 }
 
 RAIN_MAX = 60.0                # mm/h（これ以上は同じ色）
@@ -59,7 +60,7 @@ def url_for(cycle: dt.datetime) -> str:
     q = {
         "dir": f"/gfs.{d}/{h}/atmos",
         "file": f"gfs.t{h}z.pgrb2.1p00.f{FHOUR:03d}",
-        "var_UGRD": "on", "var_VGRD": "on", "var_PRATE": "on",
+        "var_UGRD": "on", "var_VGRD": "on", "var_PRATE": "on", "var_PRMSL": "on", "lev_mean_sea_level": "on",
         "lev_10_m_above_ground": "on", "lev_surface": "on",
     }
     return NOMADS + "?" + urllib.parse.urlencode(q)
@@ -171,6 +172,13 @@ def encode_rain(prate: np.ndarray) -> bytes:
     return q.tobytes()
 
 
+def encode_pressure(pa: np.ndarray) -> bytes:
+    """Pa → hPa。(hPa - 1000) × 10 を Int16 で（0.1 hPa 刻み）。欠測は -32768"""
+    h = (pa / 100.0 - 1000.0) * 10.0
+    q = np.where(np.isnan(h), -32768, np.clip(np.round(h), -32767, 32767)).astype("<i2")
+    return q.tobytes()
+
+
 def build(fields: dict, out: str, source_url: str | None):
     u, v, pr = fields["u"], fields["v"], fields["prate"]
     if u["a"].shape != v["a"].shape:
@@ -180,6 +188,10 @@ def build(fields: dict, out: str, source_url: str | None):
         f.write(encode_wind(u["a"], v["a"]))
     with open(os.path.join(out, "rain.bin"), "wb") as f:
         f.write(encode_rain(pr["a"]))
+    ps = fields.get("prmsl")                      # 気圧は無くても風と雨は出す
+    if ps is not None:
+        with open(os.path.join(out, "pressure.bin"), "wb") as f:
+            f.write(encode_pressure(ps["a"]))
 
     def res(g):
         return f"{g['dx']:g}° 格子（{g['nx']}×{g['ny']}）"
@@ -216,10 +228,24 @@ def build(fields: dict, out: str, source_url: str | None):
             },
         },
     }
+    if ps is not None:
+        manifest["layers"]["pressure"] = {
+            "type": "scalar", "file": "pressure.bin", "format": "int16",
+            "grid": {"nx": ps["nx"], "ny": ps["ny"], "lon0": ps["lon0"], "lat0": ps["lat0"],
+                     "dx": ps["dx"], "dy": ps["dy"], "registration": "point"},
+            "meta": {
+                "title": "気圧配置", "level": "海面更正", "kind": "モデル計算",
+                "model": f"GFS 予報（海面更正気圧・初期値 +{FHOUR}時間）",
+                "validTime": iso(ps["to"]), "issuedTime": iso(ps["issued"]),
+                "usualIntervalH": CYCLE_H, "delivery": "自動取得（GitHub Actions・約6時間ごと）",
+                "resolution": res(ps), "units": "hPa", "coverage": "全球", "credit": CREDIT,
+                "encoding": {"type": "linear", "scale": 0.1, "offset": 1000, "missing": -32768},
+            },
+        }
     with open(os.path.join(out, "manifest.json"), "w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=1)
     log("書き出し完了:", out, "初期時刻", iso(u["issued"]), "有効時刻", iso(u["to"]))
-    print(f"::notice::GFS 書き出し: 初期時刻 {iso(u['issued'])}／有効時刻 {iso(u['to'])}", flush=True)
+    print(f"::notice::GFS 書き出し: 初期時刻 {iso(u['issued'])}／有効時刻 {iso(u['to'])}／気圧 {'あり' if 'prmsl' in fields else 'なし'}", flush=True)
 
 
 def main():
