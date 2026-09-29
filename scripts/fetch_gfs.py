@@ -96,6 +96,7 @@ def fetch_latest(now: dt.datetime) -> tuple[bytes, dt.datetime]:
         if body:
             return body, cyc
         time.sleep(2)  # 相手に優しく
+    print("::error::最新の GFS が見つかりませんでした", flush=True)
     raise SystemExit("最新の GFS が見つかりませんでした（ページは前回のデータかサンプルで表示されます）")
 
 
@@ -218,6 +219,7 @@ def build(fields: dict, out: str, source_url: str | None):
     with open(os.path.join(out, "manifest.json"), "w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=1)
     log("書き出し完了:", out, "初期時刻", iso(u["issued"]), "有効時刻", iso(u["to"]))
+    print(f"::notice::GFS 書き出し: 初期時刻 {iso(u['issued'])}／有効時刻 {iso(u['to'])}", flush=True)
 
 
 def main():
