@@ -156,10 +156,10 @@ function buildLandMask() {
 }
 const sunDir = new THREE.Vector3();
 const globe = new THREE.Mesh(new THREE.SphereGeometry(1, 128, 96), new THREE.ShaderMaterial({
-  uniforms: { uLand: { value: buildLandMask() }, uSun: { value: sunDir }, uNight: { value: 1 } },
+  uniforms: { uLand: { value: buildLandMask() }, uSun: { value: sunDir }, uNight: { value: 1 }, uLights: { value: null }, uLightsOn: { value: 0 } },
   vertexShader: `varying vec3 vPos; void main(){ vPos = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
   fragmentShader: `
-    uniform sampler2D uLand; uniform vec3 uSun; uniform float uNight; varying vec3 vPos;
+    uniform sampler2D uLand; uniform sampler2D uLights; uniform vec3 uSun; uniform float uNight; uniform float uLightsOn; varying vec3 vPos;
     const float PI = 3.141592653589793;
     void main(){
       vec3 n = normalize(vPos);
@@ -170,6 +170,12 @@ const globe = new THREE.Mesh(new THREE.SphereGeometry(1, 128, 96), new THREE.Sha
       vec3 col = mix(ocean, ground, land);
       float day = smoothstep(-0.10, 0.16, dot(n, normalize(uSun)));
       col *= mix(mix(1.15, 0.42, uNight), 1.45, day);   // uNight=0：昼夜なし（ふつうの地球儀）
+      // 夜の街の灯り：夜の側だけに、控えめに（主役の風の線を邪魔しない明るさ）
+      if (uLightsOn > 0.0) {
+        float li = texture2D(uLights, vec2((lon+PI)/(2.0*PI), (lat+PI*0.5)/PI)).r;
+        float night = (1.0 - smoothstep(-0.18, 0.04, dot(n, normalize(uSun)))) * uNight;
+        col += vec3(1.00, 0.78, 0.45) * pow(li, 1.3) * 0.95 * night * uLightsOn;
+      }
       float rim = dot(n, normalize(cameraPosition));
       col += vec3(0.05,0.10,0.20) * pow(1.0 - clamp(rim,0.0,1.0), 3.0) * (0.35 + 0.65*day);
       gl_FragColor = vec4(col, 1.0);
@@ -363,6 +369,9 @@ async function createMapLayer() {
     },
   };
 }
+/* 夜の街の灯り（NASA の夜の地球の合成画像。今夜の灯りそのものではない） */
+const NIGHT_LIGHTS = { title: "夜の街の灯り", kind: "衛星（過去の合成画像）", credit: "NASA（Earth's City Lights。three.js の例に収録の画像）", note: "何年か前の衛星画像を合成したもので、今夜の灯りそのものではありません" };
+if (DEV) new THREE.TextureLoader().load("data/map/night_lights.png", t => { globe.material.uniforms.uLights.value = t; globe.material.uniforms.uLightsOn.value = 1; });
 let MapLayer = null;
 if (DEV) { try { MapLayer = await createMapLayer(); MapLayer.view = "jp"; MapLayer.visible = false; } catch (e) { console.warn("地図を読めませんでした", e); } }
 if (DEV && Catalog.has("metar")) FEATURE_LAYERS.push(createPointLayer(createFeatureSource("metar"), OBS_PROFILE));
@@ -552,7 +561,9 @@ function featureBlock(l) {
     ${ages.length ? "" : `<div class="sub warn">時計の時刻に合う観測がありません</div>`}</div>`;
 }
 document.getElementById("d-layers").innerHTML = SCALAR_LAYERS.map(l => layerBlock(l.id, { visible: l.visible, profile: l.profile })).join("")
-  + FEATURE_LAYERS.map(featureBlock).join("");
+  + FEATURE_LAYERS.map(featureBlock).join("")
+  + (DEV ? `<div class="layer"><label>${NIGHT_LIGHTS.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${NIGHT_LIGHTS.kind}</span></label>
+      <div class="sub">${NIGHT_LIGHTS.note}<br>出典：${NIGHT_LIGHTS.credit}</div></div>` : "");
 for (const l of FEATURE_LAYERS) document.getElementById("t-" + l.id).addEventListener("change", e => { l.visible = e.target.checked; });
 
 /* 見せ方の切り替え（試作）：流れる地球／ふつうの地球儀／重ねる */
