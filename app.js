@@ -156,10 +156,10 @@ function buildLandMask() {
 }
 const sunDir = new THREE.Vector3();
 const globe = new THREE.Mesh(new THREE.SphereGeometry(1, 128, 96), new THREE.ShaderMaterial({
-  uniforms: { uLand: { value: buildLandMask() }, uSun: { value: sunDir } },
+  uniforms: { uLand: { value: buildLandMask() }, uSun: { value: sunDir }, uNight: { value: 1 } },
   vertexShader: `varying vec3 vPos; void main(){ vPos = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
   fragmentShader: `
-    uniform sampler2D uLand; uniform vec3 uSun; varying vec3 vPos;
+    uniform sampler2D uLand; uniform vec3 uSun; uniform float uNight; varying vec3 vPos;
     const float PI = 3.141592653589793;
     void main(){
       vec3 n = normalize(vPos);
@@ -169,7 +169,7 @@ const globe = new THREE.Mesh(new THREE.SphereGeometry(1, 128, 96), new THREE.Sha
       vec3 ground = vec3(0.105,0.130,0.160);
       vec3 col = mix(ocean, ground, land);
       float day = smoothstep(-0.10, 0.16, dot(n, normalize(uSun)));
-      col *= mix(0.42, 1.45, day);
+      col *= mix(mix(1.15, 0.42, uNight), 1.45, day);   // uNight=0：昼夜なし（ふつうの地球儀）
       float rim = dot(n, normalize(cameraPosition));
       col += vec3(0.05,0.10,0.20) * pow(1.0 - clamp(rim,0.0,1.0), 3.0) * (0.35 + 0.65*day);
       gl_FragColor = vec4(col, 1.0);
@@ -297,6 +297,74 @@ function createPointLayer(source, profile) {
   };
 }
 const FEATURE_LAYERS = [];
+
+/* ===== ふつうの地球儀：国境・国名・緯線経線（Natural Earth、パブリックドメイン） =====
+   国境は「見方（POV）」を持つ。jp＝日本から見た境界／fact＝実際の管理の線（主張が食い違う所は点線） */
+const MAP_VIEWS = { jp: "日本から見た境界", fact: "実際の管理の線（係争地は点線）" };
+async function createMapLayer() {
+  const [bd, lb] = await Promise.all([getJSON("data/map/boundaries.json"), getJSON("data/map/labels.json")]);
+  const group = new THREE.Group(); group.renderOrder = 1.5; scene.add(group);
+  const R = 1.0016;
+  // 緯線経線（30°ごと。赤道だけ少し濃い）
+  const grat = [], eq = [];
+  for (let lat = -60; lat <= 60; lat += 30) for (let lo = -180; lo < 180; lo += 2) (lat === 0 ? eq : grat).push([lo, lat], [lo + 2, lat]);
+  for (let lo = -180; lo < 180; lo += 30) for (let la = -80; la < 80; la += 2) grat.push([lo, la], [lo, la + 2]);
+  const segs = (pairs, r) => { const p = new Float32Array(pairs.length * 3); pairs.forEach(([lo, la], k) => toXYZ(la, lo, r, p, k * 3)); const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.BufferAttribute(p, 3)); return g; };
+  group.add(new THREE.LineSegments(segs(grat, 1.0010), new THREE.LineBasicMaterial({ color: 0x9fb4dd, transparent: true, opacity: 0.10, depthWrite: false })));
+  group.add(new THREE.LineSegments(segs(eq, 1.0010), new THREE.LineBasicMaterial({ color: 0xb8c8ea, transparent: true, opacity: 0.22, depthWrite: false })));
+  // 国境：見方ごとに「実線」「点線」を作っておき、見方を切り替えたら表示だけ入れ替える
+  const views = {};
+  for (const v of Object.keys(MAP_VIEWS)) {
+    const solid = [], dashed = [];
+    for (const l of bd.lines) { const st = l[v]; if (!st) continue; const c = l.c; for (let i = 2; i < c.length; i += 2) (st === "solid" ? solid : dashed).push([c[i-2], c[i-1]], [c[i], c[i+1]]); }
+    const a = new THREE.LineSegments(segs(solid, R), new THREE.LineBasicMaterial({ color: 0xe8d9b8, transparent: true, opacity: 0.55, depthWrite: false }));
+    const bg = segs(dashed, R), b = new THREE.LineSegments(bg, new THREE.LineDashedMaterial({ color: 0xffc98a, transparent: true, opacity: 0.75, dashSize: 0.004, gapSize: 0.004, depthWrite: false }));
+    b.computeLineDistances();
+    const g = new THREE.Group(); g.add(a, b); g.visible = false; group.add(g); views[v] = g;
+  }
+  // 国名：画面上で一定の大きさの文字。拡大するほど小さい国まで出る
+  const labels = lb.labels.slice().sort((a, b) => a.rank - b.rank).map(L => {
+    const cv = document.createElement("canvas"), ctx = cv.getContext("2d"), fs = 44;
+    ctx.font = `500 ${fs}px "Zen Kaku Gothic New","Hiragino Sans","Noto Sans JP",sans-serif`;
+    const w = Math.ceil(ctx.measureText(L.ja).width) + 16; cv.width = w; cv.height = fs + 16;
+    ctx.font = `500 ${fs}px "Zen Kaku Gothic New","Hiragino Sans","Noto Sans JP",sans-serif`; ctx.textBaseline = "middle"; ctx.textAlign = "center";
+    ctx.lineWidth = 8; ctx.strokeStyle = "rgba(3,6,14,0.85)"; ctx.strokeText(L.ja, w / 2, cv.height / 2);
+    ctx.fillStyle = "rgba(236,228,210,0.95)"; ctx.fillText(L.ja, w / 2, cv.height / 2);
+    const tex = new THREE.CanvasTexture(cv); tex.generateMipmaps = true; tex.minFilter = THREE.LinearMipmapLinearFilter; tex.anisotropy = 4;
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, sizeAttenuation: false, transparent: true, depthWrite: false, depthTest: false }));
+    const p = [0, 0, 0]; toXYZ(L.lat, L.lon, 1.012, p, 0); sp.position.set(p[0], p[1], p[2]); sp.renderOrder = 4;
+    sp.userData = { L, aspect: w / cv.height, n: new THREE.Vector3(p[0], p[1], p[2]).normalize() }; group.add(sp);
+    return sp;
+  });
+  let view = "jp", on = false;
+  const cam = new THREE.Vector3(), sp2 = new THREE.Vector3(), placed = [];
+  return {
+    views: MAP_VIEWS,
+    get view() { return view; }, set view(v) { view = v; for (const k in views) views[k].visible = k === v; },
+    set visible(v) { on = v; group.visible = v; }, get visible() { return on; },
+    tick() {
+      if (!on) return;
+      const d = camera.position.length(), px = 12.5, h = stage.clientHeight || 800;
+      const s = px / h * 2 * Math.tan(camera.fov / 2 * D2R);
+      const maxRank = d > 4.5 ? 2 : d > 3.2 ? 3 : d > 2.2 ? 4 : d > 1.7 ? 5 : 6;
+      cam.copy(camera.position).normalize();
+      placed.length = 0;
+      const W = stage.clientWidth || 400;
+      for (const sp of labels) {             // 大きい国から順に置き、重なる小さい国名は出さない
+        const u = sp.userData; let show = u.L.rank <= maxRank && (view !== "jp" || u.L.jp) && u.n.dot(cam) > 0.25;
+        if (show) {
+          sp2.copy(sp.position).project(camera);
+          const x = (sp2.x + 1) / 2 * W, y = (1 - sp2.y) / 2 * h, hw = px * u.aspect / 2 + 3, hh = px / 2 + 2;
+          if (placed.some(b => Math.abs(b[0] - x) < b[2] + hw && Math.abs(b[1] - y) < b[3] + hh)) show = false;
+          else placed.push([x, y, hw, hh]);
+        }
+        sp.visible = show; if (show) sp.scale.set(s * u.aspect, s, 1);
+      }
+    },
+  };
+}
+let MapLayer = null;
+if (DEV) { try { MapLayer = await createMapLayer(); MapLayer.view = "jp"; MapLayer.visible = false; } catch (e) { console.warn("地図を読めませんでした", e); } }
 if (DEV && Catalog.has("metar")) FEATURE_LAYERS.push(createPointLayer(createFeatureSource("metar"), OBS_PROFILE));
 
 (function addCoast() {
@@ -379,7 +447,7 @@ const VisualParticles = (() => {
     aSpd.updateRange.offset = v0; aSpd.updateRange.count = N * 2; aSpd.needsUpdate = true;
     mat.uniforms.uTime.value = frame;
   }
-  return { step, count: N };
+  return { step, count: N, lines, set visible(v) { lines.visible = v; }, get visible() { return lines.visible; } };
 })();
 
 /* ===== カメラと操作 ===== */
@@ -486,6 +554,31 @@ function featureBlock(l) {
 document.getElementById("d-layers").innerHTML = SCALAR_LAYERS.map(l => layerBlock(l.id, { visible: l.visible, profile: l.profile })).join("")
   + FEATURE_LAYERS.map(featureBlock).join("");
 for (const l of FEATURE_LAYERS) document.getElementById("t-" + l.id).addEventListener("change", e => { l.visible = e.target.checked; });
+
+/* 見せ方の切り替え（試作）：流れる地球／ふつうの地球儀／重ねる */
+if (MapLayer) {
+  const MODES = {
+    flow:  { label: "流れる地球",     wind: true,  scalar: true,  map: false, night: 1 },
+    globe: { label: "ふつうの地球儀", wind: false, scalar: false, map: true,  night: 0 },
+    both:  { label: "重ねる",         wind: true,  scalar: true,  map: true,  night: 1 },
+  };
+  const box = document.createElement("div"); box.className = "modes";
+  box.innerHTML = `<div class="seg" role="group" aria-label="見せ方">${Object.entries(MODES).map(([k, m]) => `<button type="button" data-mode="${k}">${m.label}</button>`).join("")}</div>
+    <div class="viewbox"><div class="seg small" role="group" aria-label="国境の見方">${Object.entries(MapLayer.views).map(([k, t]) => `<button type="button" data-view="${k}">${t}</button>`).join("")}</div>
+    <p class="note">国境の見方は二つから選べます。どちらも Natural Earth（パブリックドメイン）の見方別データです。</p></div>`;
+  document.getElementById("detail").insertBefore(box, document.getElementById("d-rows"));
+  const setMode = k => {
+    const m = MODES[k]; VisualParticles.visible = m.wind; MapLayer.visible = m.map; globe.material.uniforms.uNight.value = m.night;
+    for (const l of SCALAR_LAYERS) { l.visible = m.scalar; const cb = document.getElementById("t-" + l.id); if (cb) cb.checked = m.scalar; }
+    box.querySelectorAll("[data-mode]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.mode === k)));
+    box.querySelector(".viewbox").hidden = !m.map;
+    document.getElementById("d-mode").textContent = m.wind ? "風" : "地球儀";
+    updateChip();
+  };
+  const setView = v => { MapLayer.view = v; box.querySelectorAll("[data-view]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.view === v))); };
+  box.addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return; if (b.dataset.mode) setMode(b.dataset.mode); if (b.dataset.view) setView(b.dataset.view); });
+  setView("jp"); setMode("flow");
+}
 for (const l of SCALAR_LAYERS) document.getElementById("t-" + l.id).addEventListener("change", e => { l.visible = e.target.checked; updateChip(); });
 /** 見る帯の札：いまの時計の時刻が「どれくらい前／後」か。止まっていたら知らせる */
 function updateChip() {
@@ -556,7 +649,8 @@ let last = performance.now(), meterAt = last;
 function loop(now) {
   const dt = Math.min(now - last, 100); last = now;
   frames.push(dt); if (frames.length > 120) frames.shift();
-  VisualParticles.step(Math.min(dt / 16.667, 3));
+  if (VisualParticles.visible) VisualParticles.step(Math.min(dt / 16.667, 3));
+  MapLayer?.tick();
   Spin.tick(); controls.update();
   for (const l of FEATURE_LAYERS) l.tick(camera.position.length());
   renderer.render(scene, camera);
