@@ -155,6 +155,10 @@ def main():
         data, lat, lon, attrs = read(tmp)
         k = to_kelvin(data, attrs)
         g, nx, ny = regrid(k, lat, lon)
+    except BaseException as e:
+        import traceback
+        note("GMGSI 変換に失敗: " + " | ".join(traceback.format_exception(e))[-900:].replace("\n", " "), "error")
+        raise
     finally:
         os.remove(tmp)
     m = re.search(r"(\d{10})", key.split("/")[-1])
