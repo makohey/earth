@@ -54,8 +54,10 @@ async function loadCatalog() {
 }
 
 let Catalog;
-/* 開発中の層は ?dev=1 のときだけ出す（公開中の地球儀を壊さずに本物のデータで確かめるため） */
+/* 開発中の層は ?dev=1 のときだけ出す（公開中の地球儀を壊さずに本物のデータで確かめるため）
+   2026-09-29：地図・気圧・雲・氷・地震は正規版へ（まことの決定）。いま ?dev=1 だけなのは棚に戻した空港の観測 */
 const DEV = new URLSearchParams(location.search).get("dev") === "1";
+const ON = true;
 (async () => {
 try { Catalog = await loadCatalog(); }
 catch (e) { document.getElementById("loading").textContent = "データを読み込めませんでした（" + e.message + "）"; return; }
@@ -246,7 +248,7 @@ function createScalarLayer(field, profile) {
 const SCALAR_LAYERS = [];   // 値の層は全部ここに並ぶ（重なり順も層が持つ）
 /* 陸の氷（静的な地図）と海氷（GFS モデル計算）：地表の情報として、雲・雨・風の下に */
 const LAND_ICE = { title: "氷河・氷床地図（静的）", kind: "地図", credit: "Natural Earth（氷河・氷床、南極の棚氷。パブリックドメイン）", note: "いまの氷の正確な輪郭ではなく、動かない地図です" };
-if (DEV) new THREE.TextureLoader().load("data/map/land_ice.png", t => { globe.material.uniforms.uIce.value = t; globe.material.uniforms.uIceOn.value = 1; });
+if (ON) new THREE.TextureLoader().load("data/map/land_ice.png", t => { globe.material.uniforms.uIce.value = t; globe.material.uniforms.uIceOn.value = 1; });
 const SEAICE_PROFILE = {
   label: "海氷の割合（%）",
   stops: [[15,[0.52,0.60,0.70,0.20]],[40,[0.55,0.63,0.73,0.34]],[80,[0.58,0.66,0.76,0.46]],[100,[0.60,0.68,0.78,0.52]]],
@@ -255,7 +257,7 @@ const SEAICE_PROFILE = {
   present: { name: "海氷", units: "%", digits: 0, below: [15, "ほぼなし（15%未満）"], missing: "" },
   presentFn(layer, v) { if (v === null || v < 1) return ""; const m = layer.field.meta; return `海氷 <span class="num">${v < 15 ? "15%未満" : v.toFixed(0) + "%"}</span> <span style="color:var(--ink-faint)">（${m.kind}）</span>`; },
 };
-if (DEV && Catalog.has("sea-ice")) SCALAR_LAYERS.push(createScalarLayer(createGridScalarField("sea-ice"), SEAICE_PROFILE));
+if (ON && Catalog.has("sea-ice")) SCALAR_LAYERS.push(createScalarLayer(createGridScalarField("sea-ice"), SEAICE_PROFILE));
 
 /* 衛星赤外（雲）：値は 0〜254 の明るさ段階。大きいほど冷たい＝高い・厚い雲。温度への換算はしていない */
 const CLOUD_PROFILE = {
@@ -271,7 +273,7 @@ const CLOUD_PROFILE = {
     return `衛星 <span class="num">${txt}</span> <span style="color:var(--ink-faint)">（衛星・${age}分前の画像）</span>`;
   },
 };
-if (DEV && Catalog.has("cloud-ir")) SCALAR_LAYERS.push(createScalarLayer(createGridScalarField("cloud-ir"), CLOUD_PROFILE));
+if (ON && Catalog.has("cloud-ir")) SCALAR_LAYERS.push(createScalarLayer(createGridScalarField("cloud-ir"), CLOUD_PROFILE));
 if (Catalog.has("rain")) SCALAR_LAYERS.push(createScalarLayer(createGridScalarField("rain"), RAIN_PROFILE));
 
 /* ===== 値の場を「線」で見せる係（等値線）。同じ Scalar Field から、雨は面、気圧は線 ===== */
@@ -310,7 +312,7 @@ function createContourLayer(field, profile, id) {
   return { id, field, profile, set visible(v) { group.visible = v; }, get visible() { return group.visible; },
     set opacity(v) { op = v; for (const m of mats) m.opacity = m.userData.base * v; }, get opacity() { return op; } };
 }
-if (DEV && Catalog.has("pressure")) SCALAR_LAYERS.push(createContourLayer(createGridScalarField("pressure"), PRESSURE_PROFILE, "pressure"));
+if (ON && Catalog.has("pressure")) SCALAR_LAYERS.push(createContourLayer(createGridScalarField("pressure"), PRESSURE_PROFILE, "pressure"));
 
 /* ===== 物の問い合わせ口（Feature Interface） =====
    features(time) → [{ lon, lat, time, props }]
@@ -456,7 +458,7 @@ async function createMapLayer() {
 const NIGHT_LIGHTS = { title: "夜の街の灯り", kind: "衛星（過去の合成画像）", credit: "NASA（Earth's City Lights。three.js の例に収録の画像）", note: "何年か前の衛星画像を合成したもので、今夜の灯りそのものではありません" };
 new THREE.TextureLoader().load("data/map/night_lights.png", t => { globe.material.uniforms.uLights.value = t; globe.material.uniforms.uLightsOn.value = 1; });
 let MapLayer = null;
-if (DEV) { try { MapLayer = await createMapLayer(); MapLayer.view = "jp"; MapLayer.visible = false; } catch (e) { console.warn("地図を読めませんでした", e); } }
+if (ON) { try { MapLayer = await createMapLayer(); MapLayer.view = "jp"; MapLayer.visible = false; } catch (e) { console.warn("地図を読めませんでした", e); } }
 if (DEV && Catalog.has("metar")) FEATURE_LAYERS.push(createPointLayer(createFeatureSource("metar"), OBS_PROFILE));
 
 /* 最近の地震：点の大きさ＝マグニチュード（USGS）。古いほど少し薄い。警報・判定はしない */
@@ -475,7 +477,7 @@ const QUAKE_PROFILE = {
     return `地震 <span class="num">M${p.mag.toFixed(1)}（USGS）</span>　深さ <span class="num">${p.depth ?? "–"} km</span>　${p.place ?? ""} <span style="color:var(--ink-faint)">（時計の${ago}・震度ではありません）</span>`;
   },
 };
-if (DEV && Catalog.has("quakes")) FEATURE_LAYERS.push(createPointLayer(createFeatureSource("quakes"), QUAKE_PROFILE));
+if (ON && Catalog.has("quakes")) FEATURE_LAYERS.push(createPointLayer(createFeatureSource("quakes"), QUAKE_PROFILE));
 
 (function addCoast() {
   const seg = [];
@@ -668,7 +670,7 @@ document.getElementById("d-layers").innerHTML = SCALAR_LAYERS.map(l => layerBloc
   + FEATURE_LAYERS.map(featureBlock).join("")
   + (true ? `<div class="layer"><label>${NIGHT_LIGHTS.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${NIGHT_LIGHTS.kind}</span></label>
       <div class="sub">${NIGHT_LIGHTS.note}<br>出典：${NIGHT_LIGHTS.credit}</div></div>` : "")
-  + (DEV ? `<div class="layer"><label>${LAND_ICE.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${LAND_ICE.kind}</span></label>
+  + (ON ? `<div class="layer"><label>${LAND_ICE.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${LAND_ICE.kind}</span></label>
       <div class="sub">${LAND_ICE.note}<br>出典：${LAND_ICE.credit}</div></div>` : "");
 for (const l of FEATURE_LAYERS) document.getElementById("t-" + l.id).addEventListener("change", e => { l.visible = e.target.checked; });
 
