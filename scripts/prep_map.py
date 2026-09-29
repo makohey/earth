@@ -87,3 +87,25 @@ try:
     print(n, "ice polygons")
 except FileNotFoundError as e:
     print("氷の地図は作らなかった:", e)
+
+# ---- 海の名前（Natural Earth の海域。日本語名 name_ja）：文字を置く点は、海域の中で一番「内側」の点 ----
+try:
+    from shapely.geometry import shape
+    from shapely.ops import polylabel
+    seas = []
+    for f in json.load(open(os.path.join(SRC, "ne_50m_geography_marine_polys.geojson")))["features"]:
+        p = f["properties"]
+        name = p.get("name_ja") or p.get("name")
+        if not name or p.get("min_label") is None or p["min_label"] > 5:
+            continue
+        g = shape(f["geometry"])
+        if g.geom_type == "MultiPolygon":
+            g = max(g.geoms, key=lambda x: x.area)
+        pt = polylabel(g, tolerance=0.2)
+        seas.append({"ja": name, "rank": int(p["min_label"]), "lon": round(pt.x, 2), "lat": round(pt.y, 2), "sea": True})
+    lb = json.load(open(os.path.join(OUT, "labels.json"), encoding="utf-8"))
+    lb["seas"] = seas
+    json.dump(lb, open(os.path.join(OUT, "labels.json"), "w"), ensure_ascii=False, separators=(",", ":"))
+    print(len(seas), "sea labels")
+except FileNotFoundError as e:
+    print("海の名前は作らなかった:", e)

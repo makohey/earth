@@ -414,13 +414,13 @@ async function createMapLayer() {
     const g = new THREE.Group(); g.add(a, b); g.visible = false; group.add(g); views[v] = g;
   }
   // 国名：画面上で一定の大きさの文字。拡大するほど小さい国まで出る
-  const labels = lb.labels.slice().sort((a, b) => a.rank - b.rank).map(L => {
+  const labels = [...lb.labels, ...(lb.seas || [])].sort((a, b) => a.rank - b.rank).map(L => {   // 国名と海の名前
     const cv = document.createElement("canvas"), ctx = cv.getContext("2d"), fs = 44;
-    ctx.font = `500 ${fs}px "Zen Kaku Gothic New","Hiragino Sans","Noto Sans JP",sans-serif`;
+    ctx.font = `${L.sea ? 400 : 500} ${fs}px "Zen Kaku Gothic New","Hiragino Sans","Noto Sans JP",sans-serif`;
     const w = Math.ceil(ctx.measureText(L.ja).width) + 16; cv.width = w; cv.height = fs + 16;
-    ctx.font = `500 ${fs}px "Zen Kaku Gothic New","Hiragino Sans","Noto Sans JP",sans-serif`; ctx.textBaseline = "middle"; ctx.textAlign = "center";
+    ctx.font = `${L.sea ? 400 : 500} ${fs}px "Zen Kaku Gothic New","Hiragino Sans","Noto Sans JP",sans-serif`; ctx.textBaseline = "middle"; ctx.textAlign = "center";
     ctx.lineWidth = 8; ctx.strokeStyle = "rgba(3,6,14,0.85)"; ctx.strokeText(L.ja, w / 2, cv.height / 2);
-    ctx.fillStyle = "rgba(236,228,210,0.95)"; ctx.fillText(L.ja, w / 2, cv.height / 2);
+    ctx.fillStyle = L.sea ? "rgba(150,196,240,0.85)" : "rgba(236,228,210,0.95)"; ctx.fillText(L.ja, w / 2, cv.height / 2);   // 海の名前は青みの文字
     const tex = new THREE.CanvasTexture(cv); tex.generateMipmaps = true; tex.minFilter = THREE.LinearMipmapLinearFilter; tex.anisotropy = 4;
     const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, sizeAttenuation: false, transparent: true, depthWrite: false, depthTest: false }));
     const p = [0, 0, 0]; toXYZ(L.lat, L.lon, 1.012, p, 0); sp.position.set(p[0], p[1], p[2]); sp.renderOrder = 4;
@@ -442,7 +442,7 @@ async function createMapLayer() {
       placed.length = 0;
       const W = stage.clientWidth || 400;
       for (const sp of labels) {             // 大きい国から順に置き、重なる小さい国名は出さない
-        const u = sp.userData; let show = u.L.rank <= maxRank && (view !== "jp" || u.L.jp) && u.n.dot(cam) > 0.25;
+        const u = sp.userData; let show = u.L.rank <= maxRank && (view !== "jp" || u.L.jp !== false) && u.n.dot(cam) > 0.25;
         if (show) {
           sp2.copy(sp.position).project(camera);
           const x = (sp2.x + 1) / 2 * W, y = (1 - sp2.y) / 2 * h, hw = px * u.aspect / 2 + 3, hh = px / 2 + 2;
@@ -688,7 +688,7 @@ if (MapLayer) {
   document.getElementById("detail").insertBefore(box, document.getElementById("d-rows"));
   const setMode = k => {
     const m = MODES[k]; VisualParticles.visible = m.wind; MapLayer.visible = m.map; globe.material.uniforms.uNight.value = m.night;
-    for (const l of SCALAR_LAYERS) { const v = (m.scalar || l.profile.ground) && (!l.profile.modes || l.profile.modes.includes(k)); l.visible = v; const cb = document.getElementById("t-" + l.id); if (cb) cb.checked = v; }
+    for (const l of SCALAR_LAYERS) { const v = Boolean((m.scalar || l.profile.ground) && (!l.profile.modes || l.profile.modes.includes(k))) /* undefined だと three.js は「見える」と扱うので必ず真偽値に */; l.visible = v; const cb = document.getElementById("t-" + l.id); if (cb) cb.checked = v; }
     box.querySelectorAll("[data-mode]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.mode === k)));
     box.querySelector(".viewbox").hidden = !m.map;
     document.getElementById("d-mode").textContent = m.wind ? "風" : "地球儀";
