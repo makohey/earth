@@ -103,6 +103,8 @@ def read(path):
 def to_kelvin(data, attrs):
     """温度でない保存（明るさの段階など）なら、ここで換算する。わからなければ止める"""
     lo, hi = np.nanmin(data), np.nanmax(data)
+    if "0-255" in attrs.get("long_name", "") and 0 <= lo and hi <= 255:
+        return data                                    # 0〜255 の明るさ段階のまま使う（換算式は元の資料で確かめてから）
     if 150 <= lo and hi <= 350:
         return data                                    # すでに K
     if -130 <= lo and hi <= 80:
@@ -133,7 +135,7 @@ def regrid(k, lat, lon):
 
 
 def encode(g):
-    q = np.where(np.isnan(g), 255, np.clip(np.round((g - TMIN) / (TMAX - TMIN) * 254), 0, 254)).astype("uint8")
+    q = np.where(np.isnan(g), 255, np.clip(np.round(g), 0, 254)).astype("uint8")   # 255 はデータなし
     return q.tobytes()
 
 
@@ -181,6 +183,8 @@ def _main():
     with open(os.path.join(args.latest, "cloud.bin"), "wb") as f:
         f.write(encode(g))
     cover = np.mean(~np.isnan(g))
+    box = lambda la0, la1, lo0, lo1: np.nanmean(g[int((90-la1)/STEP):int((90-la0)/STEP), int((lo0+180)/STEP):int((lo1+180)/STEP)])
+    note(f"GMGSI 向きの確認: サハラ(20-25N,5-15E) {box(20,25,5,15):.1f}／南極海(55-60S) {box(-60,-55,-180,180):.1f}／熱帯西太平洋(0-10N,130-150E) {box(0,10,130,150):.1f}")
     manifest["layers"]["cloud-ir"] = {
         "type": "scalar", "file": "cloud.bin", "format": "uint8",
         "grid": {"nx": nx, "ny": ny, "lon0": -180, "lat0": 90, "dx": STEP, "dy": STEP},
@@ -189,11 +193,11 @@ def _main():
             "model": "静止気象衛星の赤外画像を全球に合成したモザイク（長波赤外）",
             "validTime": iso(img_t), "selection": {"policy": "latestBefore", "maxAgeMin": MAX_AGE_H * 60},
             "usualIntervalH": 1, "delivery": "自動取得（GitHub Actions・時計の時刻以前で一番新しい画像）",
-            "resolution": f"{STEP}° 格子に整形", "units": "K",
+            "resolution": f"{STEP}° 格子に整形", "units": "明るさ段階（0〜254）",
             "coverage": f"全球の約{cover*100:.0f}%（極に近い所は写らない）",
             "credit": "NOAA/NESDIS GMGSI（GOES・Himawari・Meteosat などの合成）。NOAA Open Data Dissemination より",
             "caution": "雲量や雨ではなく、赤外で見た温度です。低い雲や霧は地表と温度が近く、見えにくいことがあります",
-            "encoding": {"type": "linearByte", "min": TMIN, "max": TMAX, "levels": 254, "missing": 255},
+            "encoding": {"type": "raw", "missing": 255},
         },
     }
     json.dump(manifest, open(mpath, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
