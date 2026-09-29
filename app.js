@@ -583,7 +583,7 @@ async function createSkyLayer() {
   };
 }
 let SkyLayer = null;
-if (DEV) try { SkyLayer = await createSkyLayer(); } catch (e) { console.warn("夜空を読めませんでした", e); }
+try { SkyLayer = await createSkyLayer(); } catch (e) { console.warn("夜空を読めませんでした", e); }
 let MapLayer = null;
 if (ON) { try { MapLayer = await createMapLayer(); MapLayer.view = "jp"; MapLayer.visible = false; } catch (e) { console.warn("地図を読めませんでした", e); } }
 if (DEV && Catalog.has("metar")) FEATURE_LAYERS.push(createPointLayer(createFeatureSource("metar"), OBS_PROFILE));
