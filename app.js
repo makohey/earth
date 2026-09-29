@@ -457,6 +457,115 @@ async function createMapLayer() {
 /* 夜の街の灯り（NASA の夜の地球の合成画像。今夜の灯りそのものではない） */
 const NIGHT_LIGHTS = { title: "夜の街の灯り", kind: "衛星（過去の合成画像）", credit: "NASA（Earth's City Lights。three.js の例に収録の画像）", note: "何年か前の衛星画像を合成したもので、今夜の灯りそのものではありません" };
 new THREE.TextureLoader().load("data/map/night_lights.png", t => { globe.material.uniforms.uLights.value = t; globe.material.uniforms.uLightsOn.value = 1; });
+/* ===== 夜空（天体観測）：星・星座・天の川・流星群の放射点を「その天体が真上に来る地点」に描く =====
+   地理的位置：緯度＝赤緯、経度＝赤経 − グリニッジ恒星時。星空全体を地軸まわりに回すだけで今の空になる。
+   画面の真ん中の地点から見える空＝こちらを向いている半球（真ん中＝天頂、縁＝地平線）。
+   昼の側にも星はある（空にはある）が、見えないので薄く描く。 */
+const SKY_INFO = {
+  title: "夜空（天体観測）", kind: "計算（星表・星座）",
+  note: "星や星座は「その天体が真上に来る地点」に描いています。地球儀を回して真ん中に来た場所から見える空が、こちらを向いた半球です（真ん中が真上、縁が地平線）。昼の側の星は空にあっても見えないので薄くしています。天の川は銀河の位置から計算したおおまかな帯です",
+  credit: "星：XHIP（Hipparcos 拡張星表）、星座線・星座名：IAU の星座をもとにした d3-celestial のデータ（BSD-3-Clause, Olaf Frohn）",
+};
+/* 主な流星群（日付は毎年の目安。放射点は極大のころの位置の目安） */
+const METEOR_SHOWERS = [
+  { name: "しぶんぎ座流星群", from: "01-01", to: "01-06", peak: "1/4ごろ", ra: 230, dec: 49 },
+  { name: "こと座流星群", from: "04-16", to: "04-25", peak: "4/22ごろ", ra: 271, dec: 34 },
+  { name: "みずがめ座η流星群", from: "04-19", to: "05-28", peak: "5/6ごろ", ra: 338, dec: -1 },
+  { name: "ペルセウス座流星群", from: "07-17", to: "08-24", peak: "8/12〜13ごろ", ra: 48, dec: 58 },
+  { name: "りゅう座流星群", from: "10-06", to: "10-10", peak: "10/8〜9ごろ", ra: 262, dec: 54 },
+  { name: "オリオン座流星群", from: "10-02", to: "11-07", peak: "10/21ごろ", ra: 95, dec: 16 },
+  { name: "おうし座流星群（南群）", from: "09-10", to: "11-20", peak: "10/10ごろ", ra: 52, dec: 15 },
+  { name: "しし座流星群", from: "11-06", to: "11-30", peak: "11/17〜18ごろ", ra: 152, dec: 22 },
+  { name: "ふたご座流星群", from: "12-04", to: "12-20", peak: "12/14ごろ", ra: 112, dec: 33 },
+];
+function gmstDeg(date) { const n = date.getTime() / 86400000 + 2440587.5 - 2451545.0; return ((280.46061837 + 360.98564736629 * n) % 360 + 360) % 360; }
+function makeTextSprite(text, color, weight = 500, px = 12) {
+  const cv = document.createElement("canvas"), ctx = cv.getContext("2d"), fs = 44, font = `${weight} ${fs}px "Zen Kaku Gothic New","Hiragino Sans","Noto Sans JP",sans-serif`;
+  ctx.font = font; const w = Math.ceil(ctx.measureText(text).width) + 16; cv.width = w; cv.height = fs + 16;
+  ctx.font = font; ctx.textBaseline = "middle"; ctx.textAlign = "center";
+  ctx.lineWidth = 8; ctx.strokeStyle = "rgba(3,6,14,0.85)"; ctx.strokeText(text, w / 2, cv.height / 2);
+  ctx.fillStyle = color; ctx.fillText(text, w / 2, cv.height / 2);
+  const tex = new THREE.CanvasTexture(cv); tex.generateMipmaps = true; tex.minFilter = THREE.LinearMipmapLinearFilter;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, sizeAttenuation: false, transparent: true, depthWrite: false, depthTest: false }));
+  sp.userData.aspect = w / cv.height; sp.userData.px = px; sp.renderOrder = 5; return sp;
+}
+async function createSkyLayer() {
+  const d = await getJSON("data/sky/sky.json");
+  const R = 1.016, frame = new THREE.Group(); frame.visible = false; scene.add(frame);   // 天の座標（経度＝赤経）で作り、恒星時で回す
+  // 昼夜で薄くする共通のシェーダー片（世界座標の法線と太陽の向き）
+  const dayFade = `uniform vec3 uSun; varying float vDay;
+    float dayOf(vec3 wp){ return smoothstep(-0.12, 0.10, dot(normalize(wp), normalize(uSun))); }`;
+  // 星：明るさで大きさ、色は B-V で少し
+  const pos = [], size = [], col = [], tmp = [0, 0, 0];
+  for (const [ra, dec, mag, bv] of d.stars) {
+    toXYZ(dec, ra, R, tmp, 0); pos.push(...tmp);
+    size.push(Math.max(1.2, 5.2 - mag * 0.85));
+    const t = Math.max(-0.3, Math.min(1.8, bv)); col.push(t < 0.4 ? 0.80 : 1.0, t < 0.4 ? 0.88 : 0.95 - (t - 0.4) * 0.12, t < 0.4 ? 1.0 : 0.92 - (t - 0.4) * 0.35);
+  }
+  const sg = new THREE.BufferGeometry();
+  sg.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3)); sg.setAttribute("aSize", new THREE.Float32BufferAttribute(size, 1)); sg.setAttribute("aCol", new THREE.Float32BufferAttribute(col, 3));
+  const starMat = new THREE.ShaderMaterial({
+    uniforms: { uSun: { value: sunDir }, uPR: { value: renderer.getPixelRatio() } }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    vertexShader: `attribute float aSize; attribute vec3 aCol; uniform float uPR; varying vec3 vCol; ${dayFade}
+      void main(){ vec4 wp = modelMatrix * vec4(position,1.0); vDay = dayOf(wp.xyz); vCol = aCol; gl_Position = projectionMatrix * viewMatrix * wp; gl_PointSize = aSize * uPR; }`,
+    fragmentShader: `varying vec3 vCol; varying float vDay;
+      void main(){ float r = length(gl_PointCoord - 0.5); if (r > 0.5) discard; float a = smoothstep(0.5, 0.0, r) * mix(1.0, 0.18, vDay); gl_FragColor = vec4(vCol * a, 1.0); }`,
+  });
+  const stars = new THREE.Points(sg, starMat); stars.renderOrder = 6; frame.add(stars);
+  // 星座線
+  const lp = [];
+  for (const ln of d.lines) for (let i = 2; i < ln.length; i += 2) { toXYZ(ln[i-1], ln[i-2], R, tmp, 0); lp.push(...tmp); toXYZ(ln[i+1], ln[i], R, tmp, 0); lp.push(...tmp); }
+  const lg = new THREE.BufferGeometry(); lg.setAttribute("position", new THREE.Float32BufferAttribute(lp, 3));
+  const lineMat = new THREE.ShaderMaterial({ uniforms: { uSun: { value: sunDir } }, transparent: true, depthWrite: false,
+    vertexShader: `${dayFade} void main(){ vec4 wp = modelMatrix * vec4(position,1.0); vDay = dayOf(wp.xyz); gl_Position = projectionMatrix * viewMatrix * wp; }`,
+    fragmentShader: `varying float vDay; void main(){ gl_FragColor = vec4(0.62, 0.74, 1.0, mix(0.55, 0.12, vDay)); }` });
+  const lines = new THREE.LineSegments(lg, lineMat); lines.renderOrder = 6; frame.add(lines);
+  // 天の川：銀河座標の銀緯から計算したおおまかな帯（中心方向ほど明るい）
+  const W = 720, H = 360, cv = document.createElement("canvas"); cv.width = W; cv.height = H;
+  const cx = cv.getContext("2d"), img = cx.createImageData(W, H);
+  const ra0 = 192.85948 * D2R, de0 = 27.12825 * D2R, l0 = 122.93192 * D2R;          // 銀河北極（J2000）
+  for (let y = 0; y < H; y++) { const de = (90 - (y + 0.5) / H * 180) * D2R;
+    for (let x = 0; x < W; x++) { const ra = (-180 + (x + 0.5) / W * 360) * D2R;
+      const sb = Math.sin(de) * Math.sin(de0) + Math.cos(de) * Math.cos(de0) * Math.cos(ra - ra0), b = Math.asin(sb) / D2R;
+      const l = l0 - Math.atan2(Math.cos(de) * Math.sin(ra - ra0), Math.sin(de) * Math.cos(de0) - Math.cos(de) * Math.sin(de0) * Math.cos(ra - ra0));
+      const core = 0.55 + 0.45 * Math.max(0, Math.cos(l)), a = Math.exp(-(b * b) / (2 * (7 + 4 * core) ** 2)) * core;
+      const p = (y * W + x) * 4; img.data[p] = 200; img.data[p+1] = 214; img.data[p+2] = 255; img.data[p+3] = Math.round(a * 115); } }
+  cx.putImageData(img, 0, 0);
+  const mwTex = new THREE.CanvasTexture(cv); mwTex.minFilter = THREE.LinearFilter;
+  const mw = new THREE.Mesh(new THREE.SphereGeometry(R - 0.001, 96, 64), new THREE.ShaderMaterial({
+    uniforms: { uTex: { value: mwTex }, uSun: { value: sunDir } }, transparent: true, depthWrite: false,
+    vertexShader: `varying vec3 vPos; ${dayFade} void main(){ vPos = position; vec4 wp = modelMatrix * vec4(position,1.0); vDay = dayOf(wp.xyz); gl_Position = projectionMatrix * viewMatrix * wp; }`,
+    fragmentShader: `uniform sampler2D uTex; varying vec3 vPos; varying float vDay; const float PI = 3.141592653589793;
+      void main(){ vec3 n = normalize(vPos); float lat = asin(clamp(n.y,-1.0,1.0)), lon = atan(-n.z, n.x);
+        vec4 c = texture2D(uTex, vec2((lon+PI)/(2.0*PI), (lat+PI*0.5)/PI)); gl_FragColor = vec4(c.rgb, c.a * mix(1.0, 0.1, vDay)); }` }));
+  mw.renderOrder = 5.5; frame.add(mw);
+  // 星座名（大きい星座から）と、いまの時期の流星群の放射点
+  const labels = [];
+  for (const [ja, ra, dec, rank] of d.names) { if (rank > 2) continue; const sp = makeTextSprite(ja, "rgba(170,196,255,0.9)", 400, 11.5); toXYZ(dec, ra, R + 0.004, tmp, 0); sp.position.set(...tmp); sp.userData.rank = rank; frame.add(sp); labels.push(sp); }
+  const md = (Clock.now().getUTCMonth() + 1) * 100 + Clock.now().getUTCDate(), inWin = s => { const f = +s.from.replace("-", ""), t = +s.to.replace("-", ""); return f <= t ? md >= f && md <= t : md >= f || md <= t; };
+  const active = METEOR_SHOWERS.filter(inWin), radiants = [];
+  for (const s of active) {
+    const sp = makeTextSprite(`✦ ${s.name}（放射点・極大 ${s.peak}）`, "rgba(255,214,150,0.95)", 500, 12.5); toXYZ(s.dec, s.ra, R + 0.006, tmp, 0); sp.position.set(...tmp); sp.userData.rank = 0; frame.add(sp); labels.push(sp); radiants.push(s);
+  }
+  const cam = new THREE.Vector3(), wp = new THREE.Vector3();
+  return {
+    info: SKY_INFO, radiants,
+    set visible(v) { frame.visible = v; }, get visible() { return frame.visible; },
+    tick() {
+      if (!frame.visible) return;
+      frame.rotation.y = -gmstDeg(Clock.now()) * D2R;               // 経度＝赤経−恒星時
+      const dist = camera.position.length(), h = stage.clientHeight || 800, maxRank = dist > 3.2 ? 1 : 2;
+      cam.copy(camera.position).normalize();
+      for (const sp of labels) {
+        wp.copy(sp.position).applyMatrix4(frame.matrixWorld).normalize();
+        const show = sp.userData.rank <= maxRank && wp.dot(cam) > 0.3;
+        sp.visible = show; if (show) { const s = sp.userData.px / h * 2 * Math.tan(camera.fov / 2 * D2R); sp.scale.set(s * sp.userData.aspect, s, 1); }
+      }
+    },
+  };
+}
+let SkyLayer = null;
+if (DEV) try { SkyLayer = await createSkyLayer(); } catch (e) { console.warn("夜空を読めませんでした", e); }
 let MapLayer = null;
 if (ON) { try { MapLayer = await createMapLayer(); MapLayer.view = "jp"; MapLayer.visible = false; } catch (e) { console.warn("地図を読めませんでした", e); } }
 if (DEV && Catalog.has("metar")) FEATURE_LAYERS.push(createPointLayer(createFeatureSource("metar"), OBS_PROFILE));
@@ -671,7 +780,9 @@ document.getElementById("d-layers").innerHTML = SCALAR_LAYERS.map(l => layerBloc
   + (true ? `<div class="layer"><label>${NIGHT_LIGHTS.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${NIGHT_LIGHTS.kind}</span></label>
       <div class="sub">${NIGHT_LIGHTS.note}<br>出典：${NIGHT_LIGHTS.credit}</div></div>` : "")
   + (ON ? `<div class="layer"><label>${LAND_ICE.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${LAND_ICE.kind}</span></label>
-      <div class="sub">${LAND_ICE.note}<br>出典：${LAND_ICE.credit}</div></div>` : "");
+      <div class="sub">${LAND_ICE.note}<br>出典：${LAND_ICE.credit}</div></div>` : "")
+  + (SkyLayer ? `<div class="layer"><label>${SKY_INFO.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${SKY_INFO.kind}</span></label>
+      <div class="sub">${SKY_INFO.note}${SkyLayer.radiants.length ? "<br>いまの時期の流星群：" + SkyLayer.radiants.map(r => `${r.name}（極大 ${r.peak}）`).join("、") + "。見える数は年や月明かり・雲で大きく変わります" : ""}<br>出典：${SKY_INFO.credit}</div></div>` : "");
 for (const l of FEATURE_LAYERS) document.getElementById("t-" + l.id).addEventListener("change", e => { l.visible = e.target.checked; });
 
 /* 見せ方の切り替え（試作）：流れる地球／ふつうの地球儀／重ねる */
@@ -683,6 +794,7 @@ if (MapLayer) {
   };
   const box = document.createElement("div"); box.className = "modes";
   box.innerHTML = `<div class="seg" role="group" aria-label="見せ方">${Object.entries(MODES).map(([k, m]) => `<button type="button" data-mode="${k}">${m.label}</button>`).join("")}</div>
+    ${SkyLayer ? `<div class="seg" role="group" aria-label="天体観測"><button type="button" data-sky="1" aria-pressed="false">✦ 天体観測（夜空を重ねる）</button></div>` : ""}
     <div class="viewbox"><div class="seg small" role="group" aria-label="国境の見方">${Object.entries(MapLayer.views).map(([k, t]) => `<button type="button" data-view="${k}">${t}</button>`).join("")}</div>
     <p class="note">国境の見方は二つから選べます。どちらも Natural Earth（パブリックドメイン）の見方別データです。</p></div>`;
   document.getElementById("detail").insertBefore(box, document.getElementById("d-rows"));
@@ -695,7 +807,9 @@ if (MapLayer) {
     updateChip();
   };
   const setView = v => { MapLayer.view = v; box.querySelectorAll("[data-view]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.view === v))); };
-  box.addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return; if (b.dataset.mode) setMode(b.dataset.mode); if (b.dataset.view) setView(b.dataset.view); });
+  box.addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return;
+    if (b.dataset.sky) { const on = !SkyLayer.visible; SkyLayer.visible = on; b.setAttribute("aria-pressed", String(on)); return; }   /* 他の層は勝手に消さない */
+    if (b.dataset.mode) setMode(b.dataset.mode); if (b.dataset.view) setView(b.dataset.view); });
   setView("jp"); setMode("flow");
 }
 for (const l of SCALAR_LAYERS) document.getElementById("t-" + l.id).addEventListener("change", e => { l.visible = e.target.checked; updateChip(); });
@@ -769,7 +883,7 @@ function loop(now) {
   const dt = Math.min(now - last, 100); last = now;
   frames.push(dt); if (frames.length > 120) frames.shift();
   if (VisualParticles.visible) VisualParticles.step(Math.min(dt / 16.667, 3));
-  MapLayer?.tick();
+  MapLayer?.tick(); SkyLayer?.tick();
   Spin.tick(); controls.update();
   for (const l of FEATURE_LAYERS) l.tick(camera.position.length());
   renderer.render(scene, camera);
