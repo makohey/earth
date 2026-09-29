@@ -539,6 +539,24 @@ async function createSkyLayer() {
       void main(){ vec3 n = normalize(vPos); float lat = asin(clamp(n.y,-1.0,1.0)), lon = atan(-n.z, n.x);
         vec4 c = texture2D(uTex, vec2((lon+PI)/(2.0*PI), (lat+PI*0.5)/PI)); gl_FragColor = vec4(c.rgb, c.a * mix(1.0, 0.1, vDay)); }` }));
   mw.renderOrder = 5.5; frame.add(mw);
+  // 天の川の粒：帯の真ん中ほど密に、細かい光の粒を散らす（星表の星ではなく、見た目のための粒）
+  { const gp = [], gs = []; let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const gauss = () => Math.sqrt(-2 * Math.log(rnd() + 1e-9)) * Math.cos(2 * Math.PI * rnd());
+    const lNcp = 122.93192 * D2R;
+    for (let i = 0; i < 9000; i++) {
+      const l = rnd() * 2 * Math.PI, core = 0.55 + 0.45 * Math.max(0, Math.cos(l));
+      if (rnd() > 0.35 + 0.65 * core) continue;                              // 中心方向ほど多く
+      const clump = 0.6 + 0.4 * Math.sin(l * 7 + 1.3) * Math.sin(l * 3.1);   // ところどころ濃淡
+      const b = gauss() * (4 + 5 * core) * clump * D2R;
+      const sd = Math.sin(b) * Math.sin(de0) + Math.cos(b) * Math.cos(de0) * Math.cos(lNcp - l), dec = Math.asin(sd);
+      const ra = ra0 + Math.atan2(Math.cos(b) * Math.sin(lNcp - l), Math.sin(b) * Math.cos(de0) - Math.cos(b) * Math.sin(de0) * Math.cos(lNcp - l));
+      toXYZ(dec / D2R, ra / D2R, R - 0.0005, tmp, 0); gp.push(...tmp); gs.push(0.6 + rnd() * 1.1);
+    }
+    const gg = new THREE.BufferGeometry(); gg.setAttribute("position", new THREE.Float32BufferAttribute(gp, 3)); gg.setAttribute("aSize", new THREE.Float32BufferAttribute(gs, 1));
+    const grains = new THREE.Points(gg, new THREE.ShaderMaterial({ uniforms: { uSun: { value: sunDir }, uPR: { value: renderer.getPixelRatio() } }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      vertexShader: `attribute float aSize; uniform float uPR; ${dayFade} void main(){ vec4 wp = modelMatrix * vec4(position,1.0); vDay = dayOf(wp.xyz); gl_Position = projectionMatrix * viewMatrix * wp; gl_PointSize = aSize * uPR; }`,
+      fragmentShader: `varying float vDay; void main(){ float r = length(gl_PointCoord - 0.5); if (r > 0.5) discard; float a = smoothstep(0.5, 0.0, r) * mix(0.55, 0.06, vDay); gl_FragColor = vec4(vec3(0.82, 0.87, 1.0) * a, 1.0); }` }));
+    grains.renderOrder = 5.6; frame.add(grains); }
   // 星座名（大きい星座から）と、いまの時期の流星群の放射点
   const labels = [];
   for (const [ja, ra, dec, rank] of d.names) { if (rank > 2) continue; const sp = makeTextSprite(ja, "rgba(170,196,255,0.9)", 400, 11.5); toXYZ(dec, ra, R + 0.004, tmp, 0); sp.position.set(...tmp); sp.userData.rank = rank; frame.add(sp); labels.push(sp); }
@@ -783,7 +801,7 @@ document.getElementById("d-layers").innerHTML = SCALAR_LAYERS.map(l => layerBloc
       <div class="sub">${LAND_ICE.note}<br>出典：${LAND_ICE.credit}</div></div>` : "")
   + (SkyLayer ? `<div class="layer"><label>${SKY_INFO.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${SKY_INFO.kind}</span></label>
       <div class="sub">${SKY_INFO.note}${SkyLayer.radiants.length ? "<br>いまの時期の流星群：" + SkyLayer.radiants.map(r => `${r.name}（極大 ${r.peak}）`).join("、") + "。見える数は年や月明かり・雲で大きく変わります" : ""}<br>出典：${SKY_INFO.credit}</div></div>` : "");
-for (const l of FEATURE_LAYERS) document.getElementById("t-" + l.id).addEventListener("change", e => { l.visible = e.target.checked; });
+for (const l of FEATURE_LAYERS) document.getElementById("t-" + l.id).addEventListener("change", e => { l.visible = e.target.checked; if (typeof syncChips === "function") syncChips(); });
 
 /* 見せ方の切り替え（試作）：流れる地球／ふつうの地球儀／重ねる */
 if (MapLayer) {
@@ -794,25 +812,41 @@ if (MapLayer) {
   };
   const box = document.createElement("div"); box.className = "modes";
   box.innerHTML = `<div class="seg" role="group" aria-label="見せ方">${Object.entries(MODES).map(([k, m]) => `<button type="button" data-mode="${k}">${m.label}</button>`).join("")}</div>
-    ${SkyLayer ? `<div class="seg" role="group" aria-label="天体観測"><button type="button" data-sky="1" aria-pressed="false">✦ 天体観測（夜空を重ねる）</button></div>` : ""}
+    <div class="chips" role="group" aria-label="層を出す・消す"></div>
     <div class="viewbox"><div class="seg small" role="group" aria-label="国境の見方">${Object.entries(MapLayer.views).map(([k, t]) => `<button type="button" data-view="${k}">${t}</button>`).join("")}</div>
     <p class="note">国境の見方は二つから選べます。どちらも Natural Earth（パブリックドメイン）の見方別データです。</p></div>`;
-  document.getElementById("detail").insertBefore(box, document.getElementById("d-rows"));
+  const detailEl = document.getElementById("detail"); detailEl.insertBefore(box, detailEl.firstChild);   // 切り替えは一番上に（スクロールなしで届く）
+  /* 層の出し入れを、小さなボタンの列で。下の説明のチェックとも同じ状態を共有する */
+  const layerById = id => SCALAR_LAYERS.find(l => l.id === id) || FEATURE_LAYERS.find(l => l.id === id);
+  const setLayer = (id, v) => { const l = layerById(id); if (!l) return; l.visible = v; const cb = document.getElementById("t-" + id); if (cb) cb.checked = v; };
+  var CHIPS = [
+    { key: "wind", label: "風", get: () => VisualParticles.visible, set: v => { VisualParticles.visible = v; } },
+    { key: "rain", label: "雨", get: () => layerById("rain")?.visible, set: v => setLayer("rain", v) },
+    { key: "cloud-ir", label: "雲", get: () => layerById("cloud-ir")?.visible, set: v => setLayer("cloud-ir", v) },
+    { key: "pressure", label: "気圧", get: () => layerById("pressure")?.visible, set: v => setLayer("pressure", v) },
+    { key: "sea-ice", label: "海氷", get: () => layerById("sea-ice")?.visible, set: v => setLayer("sea-ice", v) },
+    { key: "quakes", label: "地震", get: () => layerById("quakes")?.visible, set: v => setLayer("quakes", v) },
+    { key: "map", label: "国境・地名", get: () => MapLayer.visible, set: v => { MapLayer.visible = v; box.querySelector(".viewbox").hidden = !v; } },
+    { key: "sky", label: "✦ 夜空", get: () => SkyLayer?.visible, set: v => { if (SkyLayer) SkyLayer.visible = v; } },
+  ].filter(c => c.key === "wind" || c.key === "map" || (c.key === "sky" ? !!SkyLayer : !!layerById(c.key)));
+  box.querySelector(".chips").innerHTML = CHIPS.map(c => `<button type="button" data-chip="${c.key}">${c.label}</button>`).join("");
+  var syncChips = () => box.querySelectorAll("[data-chip]").forEach(b => b.setAttribute("aria-pressed", String(!!CHIPS.find(c => c.key === b.dataset.chip).get())));
   const setMode = k => {
     const m = MODES[k]; VisualParticles.visible = m.wind; MapLayer.visible = m.map; globe.material.uniforms.uNight.value = m.night;
     for (const l of SCALAR_LAYERS) { const v = Boolean((m.scalar || l.profile.ground) && (!l.profile.modes || l.profile.modes.includes(k))) /* undefined だと three.js は「見える」と扱うので必ず真偽値に */; l.visible = v; const cb = document.getElementById("t-" + l.id); if (cb) cb.checked = v; }
     box.querySelectorAll("[data-mode]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.mode === k)));
     box.querySelector(".viewbox").hidden = !m.map;
     document.getElementById("d-mode").textContent = m.wind ? "風" : "地球儀";
+    syncChips();
     updateChip();
   };
   const setView = v => { MapLayer.view = v; box.querySelectorAll("[data-view]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.view === v))); };
   box.addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return;
-    if (b.dataset.sky) { const on = !SkyLayer.visible; SkyLayer.visible = on; b.setAttribute("aria-pressed", String(on)); return; }   /* 他の層は勝手に消さない */
+    if (b.dataset.chip) { const c = CHIPS.find(c => c.key === b.dataset.chip); c.set(!c.get()); syncChips(); return; }   /* 一つだけ出す・消す。他の層は勝手に消さない */
     if (b.dataset.mode) setMode(b.dataset.mode); if (b.dataset.view) setView(b.dataset.view); });
   setView("jp"); setMode("flow");
 }
-for (const l of SCALAR_LAYERS) document.getElementById("t-" + l.id).addEventListener("change", e => { l.visible = e.target.checked; updateChip(); });
+for (const l of SCALAR_LAYERS) document.getElementById("t-" + l.id).addEventListener("change", e => { l.visible = e.target.checked; updateChip(); if (typeof syncChips === "function") syncChips(); });
 /** 見る帯の札：いまの時計の時刻が「どれくらい前／後」か。止まっていたら知らせる */
 function updateChip() {
   const chip = document.getElementById("d-fresh"), now = Date.now();
