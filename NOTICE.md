@@ -10,6 +10,7 @@
 | 衛星赤外（雲）（試作） | NOAA/NESDIS GMGSI（GOES・Himawari・Meteosat などの静止気象衛星の合成）、NOAA Open Data Dissemination（AWS） | 公開利用可。出典を表示し、NOAA・JMA 等との提携や推奨を示唆しない。0.25° 格子に整形した加工品で、元データそのものではない |
 | 氷河・氷床・棚氷（試作） | Natural Earth 1:50m（氷河・氷床、南極の棚氷）を `scripts/prep_map.py` で画像化 | パブリックドメイン。動かない地図 |
 | 海氷（試作） | NOAA / NCEP GFS の海氷の割合（ICEC） | 米国政府の著作物。モデル計算（+3時間） |
+| 最近の地震（試作） | USGS Earthquake Hazards Program の GeoJSON Summary Feed（M2.5以上・過去7日） | 米国政府の公開データ。出典を表示。マグニチュードは USGS の値で震度ではない |
 | 夜の街の灯り（試作） | NASA「Earth's City Lights」（three.js の例 `examples/textures/planets/earth_lights_2048.png` を白黒化） | NASA の画像（米国政府の著作物）。何年か前の合成画像で、今夜の灯りではない |
 | 空港の観測（試作） | NOAA / NWS Aviation Weather Center（aviationweather.gov）の METAR | 米国政府の公開データ。電文は加工せず添える |
 | 3D 表示 | three.js r147（jsDelivr から読み込み） | MIT License |

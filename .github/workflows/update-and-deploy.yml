@@ -45,6 +45,10 @@ jobs:
         continue-on-error: true
         run: python scripts/fetch_gmgsi.py --latest _site/data/latest
 
+      - name: 最近の地震（USGS、過去7日・M2.5以上）
+        continue-on-error: true
+        run: python scripts/fetch_quakes.py --latest _site/data/latest
+
       # 空港の観測（METAR）は棚に戻した（2026-09-29）。取得の仕組みは scripts/fetch_metar.py に残してある
 
       - uses: actions/configure-pages@v6

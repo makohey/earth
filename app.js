@@ -325,6 +325,11 @@ const SELECTION = {
     }
     return [...best.values()];
   },
+  /** 出来事（地震など）：時計以前で、一定の時間の窓の中に起きたものすべて。未来は出さない */
+  windowBefore(rows, F, time, pol) {
+    const tmin = Math.floor(time.getTime() / 60000);
+    return rows.filter(r => r[F.tmin] <= tmin && r[F.tmin] >= tmin - pol.windowMin);
+  },
 };
 function createFeatureSource(id) {
   const meta = Catalog.meta(id), { fields, rows } = Catalog.rows(id);
@@ -349,15 +354,15 @@ const OBS_PROFILE = {
 };
 function createPointLayer(source, profile) {
   const feats = source.features(Clock.now());
-  const pos = new Float32Array(feats.length * 3), age = new Float32Array(feats.length);
-  feats.forEach((f, i) => { toXYZ(f.lat, f.lon, 1.0045, pos, i * 3); age[i] = (Clock.now() - f.time) / 60000 / profile.maxAgeMin; });
+  const pos = new Float32Array(feats.length * 3), age = new Float32Array(feats.length), size = new Float32Array(feats.length);
+  feats.forEach((f, i) => { toXYZ(f.lat, f.lon, 1.0045, pos, i * 3); age[i] = (Clock.now() - f.time) / 60000 / profile.maxAgeMin; size[i] = profile.sizeOf ? profile.sizeOf(f) : 1; });
   const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.BufferAttribute(pos, 3)); geo.setAttribute("aAge", new THREE.BufferAttribute(age, 1));
+  geo.setAttribute("position", new THREE.BufferAttribute(pos, 3)); geo.setAttribute("aAge", new THREE.BufferAttribute(age, 1)); geo.setAttribute("aSize", new THREE.BufferAttribute(size, 1));
   const mat = new THREE.ShaderMaterial({
     uniforms: { uSize: { value: profile.size * renderer.getPixelRatio() }, uShow: { value: 0 }, uOpacity: { value: 1 }, uColor: { value: new THREE.Vector3(...profile.color) } },
     transparent: true, depthWrite: false,
-    vertexShader: `attribute float aAge; uniform float uSize; varying float vAge;
-      void main(){ vAge = aAge; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); gl_PointSize = uSize; }`,
+    vertexShader: `attribute float aAge; attribute float aSize; uniform float uSize; varying float vAge;
+      void main(){ vAge = aAge; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); gl_PointSize = uSize * aSize; }`,
     fragmentShader: `uniform float uShow; uniform float uOpacity; uniform vec3 uColor; varying float vAge;
       void main(){ vec2 d = gl_PointCoord - 0.5; float r = length(d); if (r > 0.5) discard;
         float ring = smoothstep(0.5, 0.36, r) * (0.55 + 0.45 * smoothstep(0.30, 0.18, r));
@@ -453,6 +458,24 @@ new THREE.TextureLoader().load("data/map/night_lights.png", t => { globe.materia
 let MapLayer = null;
 if (DEV) { try { MapLayer = await createMapLayer(); MapLayer.view = "jp"; MapLayer.visible = false; } catch (e) { console.warn("地図を読めませんでした", e); } }
 if (DEV && Catalog.has("metar")) FEATURE_LAYERS.push(createPointLayer(createFeatureSource("metar"), OBS_PROFILE));
+
+/* 最近の地震：点の大きさ＝マグニチュード（USGS）。古いほど少し薄い。警報・判定はしない */
+const QUAKE_PROFILE = {
+  color: [1.00, 0.62, 0.42], size: 4.0,
+  showFrom: 99, fullAt: 98,            // 引いた地球でも出す（数が少ないので）
+  maxAgeMin: 24 * 60,
+  sizeOf: f => Math.max(1, Math.min(6, (f.props.mag - 1.5) * 0.9)),
+  describe(l) {
+    const m = l.source.meta, big = l.feats.filter(f => f.props.mag >= 5).length;
+    return `時計の時刻までの24時間・M2.5以上 <span class="num">${l.feats.length}</span>件（M5以上 <span class="num">${big}</span>件）<br>点の大きさ＝マグニチュード・点をタップで詳細<br>${m.caution}<br><a href="https://www.jma.go.jp/bosai/map.html#contents=earthquake_map" target="_blank" rel="noopener" style="color:var(--accent)">気象庁の地震情報</a><br>出典：${m.credit}`;
+  },
+  present(f) {
+    const p = f.props, h = (Clock.now() - f.time) / 3600000;
+    const ago = h < 1 ? `${Math.round(h * 60)}分前` : `${h.toFixed(h < 10 ? 1 : 0)}時間前`;
+    return `地震 <span class="num">M${p.mag.toFixed(1)}（USGS）</span>　深さ <span class="num">${p.depth ?? "–"} km</span>　${p.place ?? ""} <span style="color:var(--ink-faint)">（時計の${ago}・震度ではありません）</span>`;
+  },
+};
+if (DEV && Catalog.has("quakes")) FEATURE_LAYERS.push(createPointLayer(createFeatureSource("quakes"), QUAKE_PROFILE));
 
 (function addCoast() {
   const seg = [];
@@ -631,6 +654,9 @@ function layerBlock(id, opts) {
 }
 /* 物の層の説明：データ時刻は一つではないので、時計との差の幅で見せる */
 function featureBlock(l) {
+  if (l.profile.describe) return `<div class="layer">
+    <label><input type="checkbox" id="t-${l.id}" ${l.visible ? "checked" : ""}> ${l.source.meta.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${l.source.meta.kind}</span></label>
+    <div class="sub">${l.profile.describe(l)}</div></div>`;
   const m = l.source.meta, ages = l.feats.map(f => (Clock.now() - f.time) / 60000).sort((a, b) => a - b);
   const med = ages.length ? Math.round(ages[ages.length >> 1]) : null;
   return `<div class="layer">
@@ -721,7 +747,7 @@ renderer.domElement.addEventListener("pointerup", e => {
   const ll = `${Math.abs(la).toFixed(1)}°${la >= 0 ? "N" : "S"} ${Math.abs(lo).toFixed(1)}°${lo >= 0 ? "E" : "W"}`;
   document.getElementById("d-pick").innerHTML = `<span class="num">${ll}</span>　風速 <span class="num">${sp.toFixed(1)} m/s</span>　${DIRS[Math.round(from / 22.5) % 16]}の風 <span style="color:var(--ink-faint)">（${wm.kind}・格子から補間）</span>`
     + SCALAR_LAYERS.filter(l => l.visible).map(l => presentValue(l, l.field.sample(lo, la, Clock.now()))).filter(Boolean).map(t => "<br>" + t).join("")
-    + FEATURE_LAYERS.filter(l => l.shown).map(l => { const f = l.nearest(lo, la, 0.5 + 1.2 * (camera.position.length() - 1)); return f ? "<br>" + presentObs(f) : ""; }).join("");
+    + FEATURE_LAYERS.filter(l => l.shown).map(l => { const f = l.nearest(lo, la, 0.5 + 1.2 * (camera.position.length() - 1)); return f ? "<br>" + (l.profile.present ? l.profile.present(f) : presentObs(f)) : ""; }).join("");
   showPick(document.getElementById("d-pick").innerHTML.replace(/<span style="color:var\(--ink-faint\)">[^<]*<\/span>/g, "").replace(/<br>/g, "　"));
 });
 const hint = document.getElementById("hint"); let hintGone = false;
