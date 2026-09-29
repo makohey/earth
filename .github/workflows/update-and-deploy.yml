@@ -51,9 +51,13 @@ jobs:
           import json
           m = json.load(open("_site/data/latest/manifest.json"))
           t = m["layers"]["wind-10m"]["meta"]["validTime"]
-          print("hour=" + t[0:4] + t[5:7] + t[8:10] + t[11:13])
+          import datetime as dt
+          c = dt.datetime.fromisoformat(t.replace("Z", "+00:00"))
+          print("hour=" + c.strftime("%Y%m%d%H"))
+          print("prev=" + (c - dt.timedelta(hours=1)).strftime("%Y%m%d%H"))
           PY
 
+      # 保存は1時間ごと。時計の時刻の回と、その1時間前の回の両方を使う（保存が遅れた回の穴を埋める）
       - name: その時刻に保存しておいた空港の観測を探す
         if: steps.clock.outputs.hour != ''
         uses: actions/cache/restore@v6
@@ -61,9 +65,20 @@ jobs:
           path: obs
           key: metar-${{ steps.clock.outputs.hour }}
 
+      - name: 1時間前の保存分も探す
+        if: steps.clock.outputs.prev != ''
+        run: mkdir -p obs && mv obs obs_now
+      - if: steps.clock.outputs.prev != ''
+        uses: actions/cache/restore@v6
+        with:
+          path: obs
+          key: metar-${{ steps.clock.outputs.prev }}
+      - if: steps.clock.outputs.prev != ''
+        run: mkdir -p obs && mv obs obs_prev
+
       - name: 空港の観測を地球儀に付ける（時計より後の観測は落とす）
         continue-on-error: true
-        run: python scripts/fetch_metar.py attach --snapshot obs/metar.json --latest _site/data/latest
+        run: python scripts/fetch_metar.py attach --snapshot obs_now/metar.json obs_prev/metar.json --latest _site/data/latest
 
       - uses: actions/configure-pages@v6
 

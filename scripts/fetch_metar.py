@@ -136,14 +136,19 @@ def cmd_attach(args):
     if not os.path.exists(mpath):
         note("地球儀の最新データがないので、METAR は付けません", "warning")
         return
-    if not os.path.exists(args.snapshot):
+    snaps = [json.load(open(p, encoding="utf-8")) for p in args.snapshot if os.path.exists(p)]
+    if not snaps:
         note("時計の時刻に合う METAR の保存分がありません（最初の数時間は正常）", "warning")
         return
     manifest = json.load(open(mpath, encoding="utf-8"))
     clock = dt.datetime.fromisoformat(manifest["layers"]["wind-10m"]["meta"]["validTime"].replace("Z", "+00:00"))
-    snap = json.load(open(args.snapshot, encoding="utf-8"))
     cmin = int(clock.timestamp() // 60)
-    rows = [r for r in snap["rows"] if cmin - MAX_AGE_MIN <= r[3] <= cmin]  # 未来側は拾わない
+    seen, rows = set(), []
+    for snap in snaps:
+        for r in snap["rows"]:
+            if cmin - MAX_AGE_MIN <= r[3] <= cmin and (r[0], r[3]) not in seen:  # 未来側は拾わない
+                seen.add((r[0], r[3])); rows.append(r)
+    snap = max(snaps, key=lambda s: s["snapshotAt"])
     with open(os.path.join(args.latest, "metar.json"), "w", encoding="utf-8") as f:
         json.dump({"fields": snap["fields"], "rows": rows}, f, ensure_ascii=False, separators=(",", ":"))
     manifest["layers"]["metar"] = {
@@ -167,7 +172,7 @@ def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("snapshot"); s.add_argument("--out", required=True)
-    a = sub.add_parser("attach"); a.add_argument("--snapshot", required=True); a.add_argument("--latest", required=True)
+    a = sub.add_parser("attach"); a.add_argument("--snapshot", nargs="+", required=True); a.add_argument("--latest", required=True)
     args = ap.parse_args()
     {"snapshot": cmd_snapshot, "attach": cmd_attach}[args.cmd](args)
 
