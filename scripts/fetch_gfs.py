@@ -252,11 +252,19 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
     ap.add_argument("--grib", help="手元の GRIB2 を使う（取得しない）")
+    ap.add_argument("--cycle", help="この回（YYYYMMDDHH）だけを試す。まだ出ていなければ終了コード 3")
     args = ap.parse_args()
     if args.grib:
         path, url = args.grib, None
+    elif args.cycle:
+        cyc = dt.datetime.strptime(args.cycle, "%Y%m%d%H").replace(tzinfo=dt.timezone.utc)
+        body = download(url_for(cyc), tries=1)
+        if not body:
+            log("まだ出ていない:", args.cycle)
+            sys.exit(3)
     else:
         body, cyc = fetch_latest(dt.datetime.now(dt.timezone.utc))
+    if not args.grib:
         url = url_for(cyc)
         os.makedirs(args.out, exist_ok=True)
         path = os.path.join(args.out, "_gfs.grib2")
