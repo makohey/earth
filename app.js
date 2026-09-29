@@ -870,7 +870,12 @@ dock.addEventListener("click", () => { const open = detail.hidden; detail.hidden
 /* 地球を回している間だけ、見る帯を薄くする（消さない） */
 const peek = document.getElementById("peek"), peekPick = document.getElementById("peek-pick");
 let pickTimer = 0;
-function showPick(html) { peekPick.innerHTML = html; peekPick.hidden = false; clearTimeout(pickTimer); pickTimer = setTimeout(() => (peekPick.hidden = true), 5000); }
+/* 地点の値：項目が増えたので、行に分けて、量に応じて長めに出す（8〜20秒）。次のタップで入れ替わる */
+function showPick(html) {
+  peekPick.innerHTML = html; peekPick.hidden = false; clearTimeout(pickTimer);
+  const ms = Math.min(20000, Math.max(8000, 3000 + peekPick.textContent.length * 90));
+  pickTimer = setTimeout(() => (peekPick.hidden = true), ms);
+}
 
 
 /* 地点タップ：問い合わせ口から、その地点の風を聞く */
@@ -898,7 +903,7 @@ renderer.domElement.addEventListener("pointerup", e => {
   document.getElementById("d-pick").innerHTML = `<span class="num">${ll}</span>　風速 <span class="num">${sp.toFixed(1)} m/s</span>　${DIRS[Math.round(from / 22.5) % 16]}の風 <span style="color:var(--ink-faint)">（${wm.kind}・格子から補間）</span>`
     + SCALAR_LAYERS.filter(l => l.visible).map(l => presentValue(l, l.field.sample(lo, la, Clock.now()))).filter(Boolean).map(t => "<br>" + t).join("")
     + FEATURE_LAYERS.filter(l => l.shown).map(l => { const f = l.nearest(lo, la, 0.5 + 1.2 * (camera.position.length() - 1)); return f ? "<br>" + (l.profile.present ? l.profile.present(f) : presentObs(f)) : ""; }).join("");
-  showPick(document.getElementById("d-pick").innerHTML.replace(/<span style="color:var\(--ink-faint\)">[^<]*<\/span>/g, "").replace(/<br>/g, "　"));
+  showPick(document.getElementById("d-pick").innerHTML.replace(/<span style="color:var\(--ink-faint\)">[^<]*<\/span>/g, ""));   // 項目ごとに改行したまま
 });
 const hint = document.getElementById("hint"); let hintGone = false;
 function hideHint() { if (!hintGone) { hintGone = true; hint.style.opacity = "0"; } }
