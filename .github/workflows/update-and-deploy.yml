@@ -37,33 +37,79 @@ jobs:
           cp index.html app.js _site/
           cp -r data _site/
 
+      # 同じデータを取り直さない：前回取った「最新データ一式」を置き場（キャッシュ）から戻す。
+      # コードを直して送った（push）ときは、6時間以内の一式があればそれを使い、外へは取りに行かない。
+      # 定時・手動のときは、いつも通り取りに行く（水源への取得は1日4回のまま）
+      - uses: actions/cache/restore@v6
+        with:
+          path: saved_latest
+          key: latest-${{ github.run_id }}
+          restore-keys: latest-
+      - id: reuse
+        name: 取りに行くかどうかを決める
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          python - <<'PY'
+          import datetime as dt, json, os, shutil
+          m = "saved_latest/manifest.json"
+          age = None
+          if os.path.exists(m):
+              g = json.load(open(m, encoding="utf-8")).get("generatedAt")
+              if g:
+                  age = (dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(g.replace("Z", "+00:00"))).total_seconds() / 3600
+          hit = os.environ["EVENT"] == "push" and age is not None and age < 6
+          if hit:
+              shutil.copytree("saved_latest", "_site/data/latest")
+          msg = f"前回の一式を使う（{age:.1f}時間前に取得・外へは取りに行かない）" if hit else ("新しく取りに行く" + (f"（前回の一式は{age:.1f}時間前）" if age is not None else "（前回の一式なし）"))
+          print(f"::notice::データ取得: {os.environ['EVENT']} → {msg}")
+          open(os.environ["GITHUB_OUTPUT"], "a").write(f"hit={'true' if hit else 'false'}\n")
+          PY
+
       - name: 最新の GFS（風・降水・気圧）を取得して変換
+        if: steps.reuse.outputs.hit != 'true'
         continue-on-error: true
         run: python scripts/fetch_gfs.py --out _site/data/latest
 
       - name: 全球の衛星赤外画像（GMGSI）を、時計の時刻以前で一番新しいものから
+        if: steps.reuse.outputs.hit != 'true'
         continue-on-error: true
         run: python scripts/fetch_gmgsi.py --latest _site/data/latest
 
       - name: 最近の地震（USGS、過去7日・M2.5以上）
+        if: steps.reuse.outputs.hit != 'true'
         continue-on-error: true
         run: python scripts/fetch_quakes.py --latest _site/data/latest
 
       # 海面水温の平年差：日ごとのデータなので、取った日のファイルをキャッシュに残し、同じ日は取り直さない
       - id: today
+        if: steps.reuse.outputs.hit != 'true'
         run: echo "day=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v6
+        if: steps.reuse.outputs.hit != 'true'
         with:
           path: oisst_cache
           key: oisst-${{ steps.today.outputs.day }}
           restore-keys: oisst-
       - name: 海面水温の平年差（NOAA OISST、1日1枚）
+        if: steps.reuse.outputs.hit != 'true'
         continue-on-error: true
         run: python scripts/fetch_oisst.py --latest _site/data/latest --cache oisst_cache
 
       - name: ISS の位置（CelesTrak の軌道要素を1回だけ取り、SGP4 で計算）
+        if: steps.reuse.outputs.hit != 'true'
         continue-on-error: true
         run: python scripts/fetch_iss.py --latest _site/data/latest
+
+      # 新しく取った一式を置き場に残す（次にコードを送ったとき、これを使う）。一式が作れなかったときは残さない
+      - name: 取った一式を置き場へ
+        if: steps.reuse.outputs.hit != 'true' && hashFiles('_site/data/latest/manifest.json') != ''
+        run: rm -rf saved_latest && cp -r _site/data/latest saved_latest
+      - uses: actions/cache/save@v6
+        if: steps.reuse.outputs.hit != 'true' && hashFiles('_site/data/latest/manifest.json') != ''
+        with:
+          path: saved_latest
+          key: latest-${{ github.run_id }}
 
       # 空港の観測（METAR）は棚に戻した（2026-09-29）。取得の仕組みは scripts/fetch_metar.py に残してある
 
