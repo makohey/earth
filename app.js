@@ -36,12 +36,13 @@ async function loadCatalog() {
     paths(id) { const raw = new Int16Array(mapBufs[id]), s = 100, out = []; let cur = []; for (let i = 0; i < raw.length; i += 2) { if (raw[i] === 32767) { if (cur.length) out.push(cur); cur = []; continue; } cur.push([raw[i] / s, raw[i+1] / s]); } if (cur.length) out.push(cur); return out; },
     /** 保存形式（圧縮）を物理量に戻す係。端子はこの形式を知らない */
     scalarValues(id) {
-      const e = this.meta(id).encoding, q = e.type === "linear" ? new Int16Array(bufs[id]) : new Uint8Array(bufs[id]), out = new Float32Array(q.length);
+      const e = this.meta(id).encoding, q = e.type === "linear" ? new Int16Array(bufs[id]) : new Uint8Array(bufs[id]), out = new Float32Array(q.length);   // linearByte は Uint8
       const L = Math.log1p(e.max || 1);
       const decoders = {
         log1p: c => c === e.missing ? NaN : c === e.zero ? 0 : Math.expm1((c - 1) / e.levels * L),
         linear: c => c === e.missing ? NaN : c * e.scale + e.offset,
         raw: c => c === e.missing ? NaN : c,
+        linearByte: c => c === e.missing ? NaN : c * e.scale + e.offset,
       };
       const dec = decoders[e.type]; for (let i = 0; i < q.length; i++) out[i] = dec(q[i]);
       return out;
@@ -175,10 +176,10 @@ function buildLandMask() {
 }
 const sunDir = new THREE.Vector3();
 const globe = new THREE.Mesh(new THREE.SphereGeometry(1, 128, 96), new THREE.ShaderMaterial({
-  uniforms: { uLand: { value: buildLandMask() }, uSun: { value: sunDir }, uNight: { value: 1 }, uLights: { value: null }, uLightsOn: { value: 0 }, uIce: { value: null }, uIceOn: { value: 0 } },
+  uniforms: { uLand: { value: buildLandMask() }, uSun: { value: sunDir }, uNight: { value: 1 }, uLights: { value: null }, uLightsOn: { value: 0 }, uIce: { value: null }, uIceOn: { value: 0 }, uBathy: { value: null }, uBathyOn: { value: 0 } },
   vertexShader: `varying vec3 vPos; void main(){ vPos = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
   fragmentShader: `
-    uniform sampler2D uLand; uniform sampler2D uLights; uniform sampler2D uIce; uniform float uIceOn; uniform vec3 uSun; uniform float uNight; uniform float uLightsOn; varying vec3 vPos;
+    uniform sampler2D uLand; uniform sampler2D uLights; uniform sampler2D uIce; uniform float uIceOn; uniform sampler2D uBathy; uniform float uBathyOn; uniform vec3 uSun; uniform float uNight; uniform float uLightsOn; varying vec3 vPos;
     const float PI = 3.141592653589793;
     void main(){
       vec3 n = normalize(vPos);
@@ -186,6 +187,10 @@ const globe = new THREE.Mesh(new THREE.SphereGeometry(1, 128, 96), new THREE.Sha
       float land = texture2D(uLand, vec2((lon+PI)/(2.0*PI), (lat+PI*0.5)/PI)).r;
       vec3 ocean = mix(vec3(0.030,0.062,0.118), vec3(0.040,0.090,0.160), 0.5 + 0.5*n.y*n.y);
       vec3 ground = vec3(0.105,0.130,0.160);
+      // 海の深さ（動かない地図）：浅い海は明るめの青、深いほど藍色。控えめに
+      if (uBathyOn > 0.0) { float b = texture2D(uBathy, vec2((lon+PI)/(2.0*PI), (lat+PI*0.5)/PI)).r * 255.0;
+        float t = clamp((b - 20.0) / 200.0, 0.0, 1.0); vec3 deep = mix(vec3(0.105,0.200,0.290), vec3(0.012,0.030,0.075), pow(t, 0.6));
+        ocean = mix(ocean, deep, 0.85 * uBathyOn * step(10.0, b)); }
       vec3 col = mix(ocean, ground, land);
       // 陸の氷（氷河・氷床・棚氷。動かない地図）：抑えた冷たい色で。雲や風より前に出さない
       if (uIceOn > 0.0) { float ice = texture2D(uIce, vec2((lon+PI)/(2.0*PI), (lat+PI*0.5)/PI)).r; col = mix(col, vec3(0.42, 0.48, 0.56), ice * 0.80 * uIceOn); }
@@ -227,6 +232,12 @@ function rampRGBA(stops, v) {
   }
   return stops[stops.length-1][1];
 }
+/** 正負をまたぐ値（平年差など）用：線形に色を補間 */
+function rampLinear(stops, v) {
+  if (v <= stops[0][0]) return stops[0][1];
+  for (let k = 1; k < stops.length; k++) if (v <= stops[k][0]) { const [a, ca] = stops[k-1], [b, cb] = stops[k], t = (v - a) / (b - a); return ca.map((c, i) => c + (cb[i] - c) * t); }
+  return stops[stops.length - 1][1];
+}
 function createScalarLayer(field, profile) {
   const W = 1440, H = 720, cv = document.createElement("canvas"); cv.width = W; cv.height = H;
   const ctx = cv.getContext("2d"), img = ctx.createImageData(W, H), px = img.data;
@@ -238,7 +249,7 @@ function createScalarLayer(field, profile) {
         if (profile.noDataHatch && (x + y) % 9 === 0) { const p = (y * W + x) * 4; px[p] = px[p+1] = px[p+2] = 215; px[p+3] = 34; }   // 観測範囲外はごく薄い斜線
         continue;
       }
-      const c = rampRGBA(profile.stops, v); if (!c) continue;
+      const c = profile.linear ? rampLinear(profile.stops, v) : rampRGBA(profile.stops, v); if (!c) continue;
       const p = (y * W + x) * 4; px[p] = c[0]*255; px[p+1] = c[1]*255; px[p+2] = c[2]*255; px[p+3] = c[3]*255;
     }
   }
@@ -258,6 +269,7 @@ function createScalarLayer(field, profile) {
 }
 const SCALAR_LAYERS = [];   // 値の層は全部ここに並ぶ（重なり順も層が持つ）
 /* 陸の氷（静的な地図）と海氷（GFS モデル計算）：地表の情報として、雲・雨・風の下に */
+new THREE.TextureLoader().load("data/map/bathymetry.png", t => { t.minFilter = THREE.LinearFilter; globe.material.uniforms.uBathy.value = t; globe.material.uniforms.uBathyOn.value = 1; });
 const LAND_ICE = { title: "氷河・氷床地図（静的）", kind: "地図", credit: "Natural Earth（氷河・氷床、南極の棚氷。パブリックドメイン）", note: "いまの氷の正確な輪郭ではなく、動かない地図です" };
 if (ON) new THREE.TextureLoader().load("data/map/land_ice.png", t => { globe.material.uniforms.uIce.value = t; globe.material.uniforms.uIceOn.value = 1; });
 const SEAICE_PROFILE = {
@@ -269,6 +281,19 @@ const SEAICE_PROFILE = {
   presentFn(layer, v) { if (v === null || v < 1) return ""; const m = layer.field.meta; return `海氷 <span class="num">${v < 15 ? "15%未満" : v.toFixed(0) + "%"}</span> <span style="color:var(--ink-faint)">（${m.kind}）</span>`; },
 };
 if (ON && Catalog.has("sea-ice")) SCALAR_LAYERS.push(createScalarLayer(createGridScalarField("sea-ice"), SEAICE_PROFILE));
+
+/* 海面水温の平年差：いつもより温かい（赤）／冷たい（青）。主役の面なので、既定では出さない（ボタンで出す） */
+const SSTA_PROFILE = {
+  label: "海面水温の平年差（℃）",
+  linear: true, optIn: true,
+  stops: [[-3,[0.25,0.45,0.95,0.70]],[-1.5,[0.40,0.62,1.00,0.45]],[-0.5,[0.60,0.75,1.00,0.00]],[0.5,[1.00,0.70,0.55,0.00]],[1.5,[1.00,0.50,0.35,0.50]],[3,[0.95,0.22,0.22,0.75]]],
+  ticks: ["−3", "", "", "", "", "+3"],
+  radius: 1.0004, order: 0.7,
+  present: { name: "海面水温の平年差", units: "℃", digits: 1, below: [-Infinity, ""], missing: "" },
+  presentFn(layer, v) { if (v === null) return ""; const m = layer.field.meta;
+    return `海面水温 <span class="num">平年${v >= 0 ? "より +" : "より "}${v.toFixed(1)}℃</span> <span style="color:var(--ink-faint)">（${m.kind}・${m.validFrom.slice(0,10)}）</span>`; },
+};
+if (Catalog.has("sst-anom")) SCALAR_LAYERS.push(createScalarLayer(createGridScalarField("sst-anom"), SSTA_PROFILE));
 
 /* 衛星赤外（雲）：値は 0〜254 の明るさ段階。大きいほど冷たい＝高い・厚い雲。温度への換算はしていない */
 const CLOUD_PROFILE = {
@@ -805,7 +830,7 @@ function layerBlock(id, opts) {
   const legend = opts.profile && opts.profile.stops ? `<div class="legend"><div class="cap">${opts.profile.label}</div><div class="bar" style="background:linear-gradient(90deg, ${opts.profile.stops.map(([s, c], k) => `rgba(${c.slice(0,3).map(x => Math.round(x*255)).join(",")},${Math.max(c[3], .5)}) ${(k / (opts.profile.stops.length - 1) * 100).toFixed(0)}%`).join(", ")})"></div><div class="ticks">${opts.profile.ticks.map(v => `<span>${v}</span>`).join("")}</div></div>` : "";
   return `<div class="layer">
     <label><input type="checkbox" id="t-${id}" ${opts.visible ? "checked" : ""}> ${m.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${m.kind}</span></label>
-    <div class="sub">${fmtSpan(m)}${m.selection ? `（時計の <span class="num">${Math.round((Clock.now() - new Date(m.validTime)) / 60000)}</span>分前の画像）` : ""}・${m.resolution || ""}${m.coverage ? "・" + m.coverage : ""}${m.caution ? "<br>" + m.caution : ""}<br>出典：${m.credit}${m.sampleCredit ? "（" + m.sampleCredit + "）" : ""}</div>
+    <div class="sub">${fmtSpan(m)}${m.selection ? (() => { const mn = Math.round((Clock.now() - new Date(m.validTime)) / 60000); return `（時計の <span class="num">${mn >= 1440 ? (mn / 1440).toFixed(1) + "日" : mn + "分"}</span>前のデータ）`; })() : ""}・${m.resolution || ""}${m.coverage ? "・" + m.coverage : ""}${m.caution ? "<br>" + m.caution : ""}<br>出典：${m.credit}${m.sampleCredit ? "（" + m.sampleCredit + "）" : ""}</div>
     ${ok ? "" : `<div class="sub warn">地球儀の時計（${fmtUTC(Clock.now())}）とは別の時刻のデータです</div>`}
     ${legend}</div>`;
 }
@@ -848,12 +873,13 @@ if (MapLayer) {
   const detailEl = document.getElementById("detail"); detailEl.insertBefore(box, detailEl.firstChild);   // 切り替えは一番上に（スクロールなしで届く）
   /* 層の出し入れを、小さなボタンの列で。下の説明のチェックとも同じ状態を共有する */
   const layerById = id => SCALAR_LAYERS.find(l => l.id === id) || FEATURE_LAYERS.find(l => l.id === id);
-  const setLayer = (id, v) => { const l = layerById(id); if (!l) return; l.visible = v; const cb = document.getElementById("t-" + id); if (cb) cb.checked = v; };
+  const setLayer = (id, v) => { const l = layerById(id); if (!l) return; l.visible = v; l.userOn = v; const cb = document.getElementById("t-" + id); if (cb) cb.checked = v; };
   var CHIPS = [
     { key: "wind", label: "風", get: () => VisualParticles.visible, set: v => { VisualParticles.visible = v; } },
     { key: "rain", label: "雨", get: () => layerById("rain")?.visible, set: v => setLayer("rain", v) },
     { key: "cloud-ir", label: "雲", get: () => layerById("cloud-ir")?.visible, set: v => setLayer("cloud-ir", v) },
     { key: "pressure", label: "気圧", get: () => layerById("pressure")?.visible, set: v => setLayer("pressure", v) },
+    { key: "sst-anom", label: "海水温（平年差）", get: () => layerById("sst-anom")?.visible, set: v => setLayer("sst-anom", v) },
     { key: "sea-ice", label: "海氷", get: () => layerById("sea-ice")?.visible, set: v => setLayer("sea-ice", v) },
     { key: "quakes", label: "地震", get: () => layerById("quakes")?.visible, set: v => setLayer("quakes", v) },
     { key: "map", label: "国境・地名", get: () => MapLayer.visible, set: v => { MapLayer.visible = v; box.querySelector(".viewbox").hidden = !v; } },
@@ -863,7 +889,7 @@ if (MapLayer) {
   var syncChips = () => box.querySelectorAll("[data-chip]").forEach(b => b.setAttribute("aria-pressed", String(!!CHIPS.find(c => c.key === b.dataset.chip).get())));
   const setMode = k => {
     const m = MODES[k]; VisualParticles.visible = m.wind; MapLayer.visible = m.map; globe.material.uniforms.uNight.value = m.night;
-    for (const l of SCALAR_LAYERS) { const v = Boolean((m.scalar || l.profile.ground) && (!l.profile.modes || l.profile.modes.includes(k))) /* undefined だと three.js は「見える」と扱うので必ず真偽値に */; l.visible = v; const cb = document.getElementById("t-" + l.id); if (cb) cb.checked = v; }
+    for (const l of SCALAR_LAYERS) { const v = Boolean((m.scalar || l.profile.ground) && (!l.profile.modes || l.profile.modes.includes(k)) && (!l.profile.optIn || l.userOn)) /* undefined だと three.js は「見える」と扱うので必ず真偽値に */; l.visible = v; const cb = document.getElementById("t-" + l.id); if (cb) cb.checked = v; }
     box.querySelectorAll("[data-mode]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.mode === k)));
     box.querySelector(".viewbox").hidden = !m.map;
     document.getElementById("d-mode").textContent = m.wind ? "風" : "地球儀";

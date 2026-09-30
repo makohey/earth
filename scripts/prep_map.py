@@ -109,3 +109,27 @@ try:
     print(len(seas), "sea labels")
 except FileNotFoundError as e:
     print("海の名前は作らなかった:", e)
+
+# ---- 海の深さ（Natural Earth 10m の水深帯 0/200/1000/…/10000 m）：動かない地図として一枚の画像にする ----
+# 画素の値＝深さの段（0＝陸・浅い海、11＝10000 m より深い）。浅い帯から順に重ねて塗る
+try:
+    from PIL import Image, ImageDraw
+    W, H = 2048, 1024
+    im = Image.new("L", (W, H), 0)
+    dr = ImageDraw.Draw(im)
+    X = lambda lo: (lo + 180) / 360 * W
+    Y = lambda la: (90 - la) / 180 * H
+    bands = ["L_0", "K_200", "J_1000", "I_2000", "H_3000", "G_4000", "F_5000", "E_6000", "D_7000", "C_8000", "B_9000", "A_10000"]
+    for k, b in enumerate(bands):
+        path = os.path.join(SRC, f"ne_10m_bathymetry_{b}.geojson")
+        for f in json.load(open(path))["features"]:
+            g = f["geometry"]
+            polys = [g["coordinates"]] if g["type"] == "Polygon" else g["coordinates"]
+            for poly in polys:
+                dr.polygon([(X(lo), Y(la)) for lo, la in poly[0]], fill=k * 20 + 20)
+                for hole in poly[1:]:
+                    dr.polygon([(X(lo), Y(la)) for lo, la in hole], fill=(k - 1) * 20 + 20 if k else 0)
+    im.save(os.path.join(OUT, "bathymetry.png"), optimize=True)
+    print("bathymetry", os.path.getsize(os.path.join(OUT, "bathymetry.png")) // 1024, "KB")
+except FileNotFoundError as e:
+    print("海の深さは作らなかった:", e)

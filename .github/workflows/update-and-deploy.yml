@@ -49,6 +49,18 @@ jobs:
         continue-on-error: true
         run: python scripts/fetch_quakes.py --latest _site/data/latest
 
+      # 海面水温の平年差：日ごとのデータなので、取った日のファイルをキャッシュに残し、同じ日は取り直さない
+      - id: today
+        run: echo "day=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6
+        with:
+          path: oisst_cache
+          key: oisst-${{ steps.today.outputs.day }}
+          restore-keys: oisst-
+      - name: 海面水温の平年差（NOAA OISST、1日1枚）
+        continue-on-error: true
+        run: python scripts/fetch_oisst.py --latest _site/data/latest --cache oisst_cache
+
       # 空港の観測（METAR）は棚に戻した（2026-09-29）。取得の仕組みは scripts/fetch_metar.py に残してある
 
       - uses: actions/configure-pages@v6
