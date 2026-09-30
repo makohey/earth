@@ -673,7 +673,7 @@ function createIssLayer() {
       float core = smoothstep(0.20, 0.10, r), halo = smoothstep(0.5, 0.2, r) * (0.35 + 0.2 * sin(uT * 3.0));
       gl_FragColor = vec4(mix(vec3(1.0,0.86,0.45), vec3(1.0), core), max(core, halo)); }` }));
   dot.frustumCulled = false; group.add(dot);
-  const label = makeTextSprite("ISS（いま）", "rgba(255,236,170,0.98)", 700, 12.5); group.add(label);
+  const label = makeTextSprite("ISS NOW", "rgba(255,236,170,0.98)", 700, 12.5); group.add(label);
   const fill = (line, from, to) => { const a = line.geometry.attributes.position; let last = null;
     for (let k = 0; k <= SEG; k++) { const q = at(from + (to - from) * k / SEG); if (q) last = q.p; if (last) a.setXYZ(k, ...last); }
     a.needsUpdate = true; line.computeLineDistances?.(); };
