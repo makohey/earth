@@ -29,7 +29,7 @@ jobs:
           python-version: "3.12"
 
       - name: 道具を入れる（GRIB2 を読む eccodes）
-        run: pip install eccodes numpy netCDF4
+        run: pip install eccodes numpy netCDF4 sgp4
 
       - name: ページを組み立てる
         run: |
@@ -60,6 +60,10 @@ jobs:
       - name: 海面水温の平年差（NOAA OISST、1日1枚）
         continue-on-error: true
         run: python scripts/fetch_oisst.py --latest _site/data/latest --cache oisst_cache
+
+      - name: ISS の位置（CelesTrak の軌道要素を1回だけ取り、SGP4 で計算）
+        continue-on-error: true
+        run: python scripts/fetch_iss.py --latest _site/data/latest
 
       # 空港の観測（METAR）は棚に戻した（2026-09-29）。取得の仕組みは scripts/fetch_metar.py に残してある
 

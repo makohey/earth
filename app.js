@@ -650,6 +650,62 @@ const QUAKE_PROFILE = {
 };
 if (ON && Catalog.has("quakes")) FEATURE_LAYERS.push(createPointLayer(createFeatureSource("quakes"), QUAKE_PROFILE));
 
+/* ===== ISS（国際宇宙ステーション）：時計の約束の例外。地球儀の時計ではなく「いま」の位置で動く =====
+   位置は Actions が軌道要素（CelesTrak）から SGP4 で30秒ごとに計算済み。ブラウザは時刻で補間するだけ（見る人から外へは取りに行かない） */
+function createIssLayer() {
+  const src = { id: "iss", meta: Catalog.meta("iss") }, d = Catalog.rows("iss"), RE = 6371;
+  const n = d.pts.length, xyz = new Float32Array(n * 3);
+  d.pts.forEach(([la, lo, alt], i) => toXYZ(la, lo, 1 + alt / RE, xyz, i * 3));
+  const at = ms => { const f = (ms / 1000 - d.t0) / d.step; if (f < 0 || f > n - 1) return null;
+    const i = Math.min(n - 2, Math.floor(f)), t = f - i, o = [0, 0, 0];
+    for (let k = 0; k < 3; k++) o[k] = xyz[i*3+k] + (xyz[i*3+3+k] - xyz[i*3+k]) * t;
+    const [la0, lo0, a0] = d.pts[i], [, , a1] = d.pts[i + 1], r = Math.hypot(...o);
+    return { p: o, lat: Math.asin(o[1] / r) / D2R, lon: Math.atan2(-o[2], o[0]) / D2R, alt: a0 + (a1 - a0) * t }; };
+  const group = new THREE.Group(); group.renderOrder = 4; scene.add(group);
+  const SPAN = 46 * 60000, SEG = 92;                                // 前後46分（ほぼ半周ずつ）
+  const mkLine = (mat) => { const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.BufferAttribute(new Float32Array((SEG + 1) * 3), 3)); const l = new THREE.Line(g, mat); l.frustumCulled = false; group.add(l); return l; };
+  const past = mkLine(new THREE.LineBasicMaterial({ color: 0xffe9a8, transparent: true, opacity: 0.55, depthWrite: false }));
+  const next = mkLine(new THREE.LineDashedMaterial({ color: 0xffe9a8, transparent: true, opacity: 0.35, depthWrite: false, dashSize: 0.012, gapSize: 0.01 }));
+  const dotGeo = new THREE.BufferGeometry(); dotGeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(3), 3));
+  const dot = new THREE.Points(dotGeo, new THREE.ShaderMaterial({ uniforms: { uSize: { value: 15 * renderer.getPixelRatio() }, uT: { value: 0 } }, transparent: true, depthWrite: false,
+    vertexShader: `uniform float uSize; void main(){ gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); gl_PointSize = uSize; }`,
+    fragmentShader: `uniform float uT; void main(){ float r = length(gl_PointCoord - 0.5); if (r > 0.5) discard;
+      float core = smoothstep(0.20, 0.10, r), halo = smoothstep(0.5, 0.2, r) * (0.35 + 0.2 * sin(uT * 3.0));
+      gl_FragColor = vec4(mix(vec3(1.0,0.86,0.45), vec3(1.0), core), max(core, halo)); }` }));
+  dot.frustumCulled = false; group.add(dot);
+  const label = makeTextSprite("ISS（いま）", "rgba(255,236,170,0.98)", 700, 12.5); group.add(label);
+  const fill = (line, from, to) => { const a = line.geometry.attributes.position; let last = null;
+    for (let k = 0; k <= SEG; k++) { const q = at(from + (to - from) * k / SEG); if (q) last = q.p; if (last) a.setXYZ(k, ...last); }
+    a.needsUpdate = true; line.computeLineDistances?.(); };
+  let on = true, cur = null, lastBuild = 0;
+  const cam = new THREE.Vector3(), wp = new THREE.Vector3();
+  return {
+    id: "iss", source: src, feats: [], profile: {
+      describe() { const m = src.meta, q = at(Date.now());
+        return `${q ? `いまの高度 約<span class="num">${Math.round(q.alt)}</span> km・地球を約90分で1周` : `<span class="warn">いまの時刻の位置がありません（計算の範囲外）</span>`}<br>光る点＝いまの位置、実線＝さっき通った道、点線＝これから通る道（前後それぞれ約46分）<br>${m.caution}<br>軌道要素の時刻 <span class="num">${fmtUTC(new Date(m.tleEpoch))}</span><br><a href="https://spotthestation.nasa.gov/" target="_blank" rel="noopener" style="color:var(--accent)">肉眼で見える時刻（NASA Spot the Station）</a><br>出典：${m.credit}`; },
+      present(f) { return `ISS（国際宇宙ステーション）　高度 約<span class="num">${Math.round(f.alt)} km</span>　<span class="num">${Math.abs(f.lat).toFixed(1)}°${f.lat >= 0 ? "N" : "S"} ${Math.abs(f.lon).toFixed(1)}°${f.lon >= 0 ? "E" : "W"}</span> の上空 <span style="color:var(--ink-faint)">（いまの位置・計算値）</span>`; },
+    },
+    set visible(v) { on = v; group.visible = v; }, get visible() { return on; },
+    get shown() { return on && !!cur; },
+    tick() {
+      if (!on) return;
+      const now = Date.now(); cur = at(now);
+      group.visible = !!cur; if (!cur) return;
+      if (now - lastBuild > 5000) { lastBuild = now; fill(past, now - SPAN, now); fill(next, now, now + SPAN); }
+      past.geometry.attributes.position.setXYZ(SEG, ...cur.p); past.geometry.attributes.position.needsUpdate = true;
+      next.geometry.attributes.position.setXYZ(0, ...cur.p); next.geometry.attributes.position.needsUpdate = true; next.computeLineDistances();
+      dot.geometry.attributes.position.setXYZ(0, ...cur.p); dot.geometry.attributes.position.needsUpdate = true;
+      dot.material.uniforms.uT.value = now / 1000;
+      const h = stage.clientHeight || 800, s = label.userData.px / h * 2 * Math.tan(camera.fov / 2 * D2R);
+      wp.set(...cur.p); const r = wp.length(); wp.multiplyScalar((r + 0.03) / r); label.position.copy(wp);
+      label.scale.set(s * label.userData.aspect, s, 1);
+      cam.copy(camera.position); label.visible = wp.clone().normalize().dot(cam.normalize()) > 0.08;   // 地球の裏側では札を出さない
+    },
+    nearest(lon, lat, maxDeg) { if (!cur) return null; const dd = Math.hypot((((cur.lon - lon + 540) % 360) - 180) * Math.cos(lat * D2R), cur.lat - lat); return dd < Math.max(maxDeg, 3) ? cur : null; },
+  };
+}
+if (ON && Catalog.has("iss")) { try { FEATURE_LAYERS.push(createIssLayer()); } catch (e) { console.warn("ISS を出せませんでした", e); } }
+
 (function addCoast() {
   const seg = [];
   for (const line of Catalog.paths("coast")) for (let k = 1; k < line.length; k++) seg.push(line[k-1], line[k]);
@@ -882,6 +938,7 @@ if (MapLayer) {
     { key: "sst-anom", label: "海水温（平年差）", get: () => layerById("sst-anom")?.visible, set: v => setLayer("sst-anom", v) },
     { key: "sea-ice", label: "海氷", get: () => layerById("sea-ice")?.visible, set: v => setLayer("sea-ice", v) },
     { key: "quakes", label: "地震", get: () => layerById("quakes")?.visible, set: v => setLayer("quakes", v) },
+    { key: "iss", label: "ISS", get: () => layerById("iss")?.visible, set: v => setLayer("iss", v) },
     { key: "map", label: "国境・地名", get: () => MapLayer.visible, set: v => { MapLayer.visible = v; box.querySelector(".viewbox").hidden = !v; } },
     { key: "sky", label: "✦ 夜空", get: () => SkyLayer?.visible, set: v => { if (SkyLayer) SkyLayer.visible = v; } },
   ].filter(c => c.key === "wind" || c.key === "map" || (c.key === "sky" ? !!SkyLayer : !!layerById(c.key)));
