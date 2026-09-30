@@ -623,6 +623,47 @@ let SkyLayer = null;
 try { SkyLayer = await createSkyLayer(); } catch (e) { console.warn("夜空を読めませんでした", e); }
 let MapLayer = null;
 if (ON) { try { MapLayer = await createMapLayer(); MapLayer.view = "jp"; MapLayer.visible = false; } catch (e) { console.warn("地図を読めませんでした", e); } }
+
+/* ===== 赤道と日付変更線（Natural Earth、パブリックドメイン） =====
+   日付変更線は 180° の直線ではなく、島国の都合で曲がっている。線の両側に「いまの日付」を出す（西側が1日先） */
+async function createGuideLayer() {
+  const d = await getJSON("data/map/lines.json");
+  const group = new THREE.Group(); group.renderOrder = 1.9; group.visible = false; scene.add(group);
+  const R = 1.0022, geoOf = pairs => { const p = new Float32Array(pairs.length * 3); pairs.forEach(([lo, la], k) => toXYZ(la, lo, R, p, k * 3)); const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.BufferAttribute(p, 3)); return g; };
+  const eq = []; for (let lo = -180; lo < 180; lo += 1) eq.push([lo, 0], [lo + 1, 0]);
+  group.add(new THREE.LineSegments(geoOf(eq), new THREE.LineBasicMaterial({ color: 0xffd08a, transparent: true, opacity: 0.7, depthWrite: false })));
+  const dl = []; for (const line of d.dateline) for (let k = 1; k < line.length; k++) dl.push(line[k - 1], line[k]);
+  const dls = new THREE.LineSegments(geoOf(dl), new THREE.LineDashedMaterial({ color: 0xff9fc0, transparent: true, opacity: 0.85, dashSize: 0.012, gapSize: 0.008, depthWrite: false }));
+  dls.computeLineDistances(); group.add(dls);
+  const labels = [], put = (text, color, lat, lon, px = 12) => { const sp = makeTextSprite(text, color, 600, px), q = [0, 0, 0]; toXYZ(lat, lon, 1.006, q, 0); sp.position.set(...q); group.add(sp); labels.push(sp); return sp; };
+  for (const lo of [-150, -60, 30, 120]) put("赤道", "rgba(255,214,150,0.95)", 1.6, lo);
+  put("日付変更線", "rgba(255,175,205,0.95)", 22, 180);
+  put("日付変更線", "rgba(255,175,205,0.95)", -30, 180);
+  /* 両側の日付：日付変更線のすぐ西はおよそ UTC+12、すぐ東はおよそ UTC−12。いつでも1日ちがう */
+  const md = off => { const t = new Date(Date.now() + off * 3600000); return `${t.getUTCMonth() + 1}月${t.getUTCDate()}日`; };
+  let west = null, east = null, shown = "";
+  const cam = new THREE.Vector3(), wp = new THREE.Vector3();
+  const refreshDates = () => { const k = md(12) + md(-12); if (k === shown) return; shown = k;
+    for (const sp of [west, east]) if (sp) { group.remove(sp); labels.splice(labels.indexOf(sp), 1); sp.material.map.dispose(); sp.material.dispose(); }
+    west = put(`← ${md(12)}`, "rgba(255,235,210,0.95)", 38, 170, 11.5); east = put(`${md(-12)} →`, "rgba(255,235,210,0.95)", 38, -170, 11.5); };
+  refreshDates();
+  return {
+    info: { title: "赤道と日付変更線", kind: "地図（線）", credit: "Natural Earth 1:50m geographic lines（パブリックドメイン）",
+      note: "赤道＝北と南のちょうど真ん中（緯度0°）。日付変更線＝ここを西へ越えると日付が1日進み、東へ越えると1日戻る線。180°の経線に沿っているが、同じ国の中で日付が分かれないように島のまわりで曲がっている。線の両側の日付は、そのあたりの「いま」の日付（西側がいつも1日先）" },
+    userOn: false,
+    set visible(v) { group.visible = v; }, get visible() { return group.visible; },
+    tick() {
+      if (!group.visible) return;
+      refreshDates();
+      const h = stage.clientHeight || 800;
+      cam.copy(camera.position).normalize();
+      for (const sp of labels) { wp.copy(sp.position).normalize(); const ok = wp.dot(cam) > 0.25; sp.visible = ok;
+        if (ok) { const s = sp.userData.px / h * 2 * Math.tan(camera.fov / 2 * D2R); sp.scale.set(s * sp.userData.aspect, s, 1); } }
+    },
+  };
+}
+let GuideLayer = null;
+if (ON) { try { GuideLayer = await createGuideLayer(); } catch (e) { console.warn("赤道・日付変更線を読めませんでした", e); } }
 if (DEV && Catalog.has("metar")) FEATURE_LAYERS.push(createPointLayer(createFeatureSource("metar"), OBS_PROFILE));
 
 /* 最近の地震：点の大きさ＝マグニチュード（USGS）。古いほど少し薄い。警報・判定はしない */
@@ -908,6 +949,8 @@ document.getElementById("d-layers").innerHTML = SCALAR_LAYERS.map(l => layerBloc
       <div class="sub">${NIGHT_LIGHTS.note}<br>出典：${NIGHT_LIGHTS.credit}</div></div>` : "")
   + (ON ? `<div class="layer"><label>${LAND_ICE.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${LAND_ICE.kind}</span></label>
       <div class="sub">${LAND_ICE.note}<br>出典：${LAND_ICE.credit}</div></div>` : "")
+  + (GuideLayer ? `<div class="layer"><label>${GuideLayer.info.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${GuideLayer.info.kind}</span></label>
+      <div class="sub">${GuideLayer.info.note}<br>出典：${GuideLayer.info.credit}</div></div>` : "")
   + (SkyLayer ? `<div class="layer"><label>${SKY_INFO.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${SKY_INFO.kind}</span></label>
       <div class="sub">${SKY_INFO.note}${SkyLayer.radiants.length ? "<br>いまの時期の流星群：" + SkyLayer.radiants.map(r => `${r.name}（極大 ${r.peak}）`).join("、") + "。見える数は年や月明かり・雲で大きく変わります" : ""}<br>出典：${SKY_INFO.credit}</div></div>` : "");
 for (const l of FEATURE_LAYERS) document.getElementById("t-" + l.id).addEventListener("change", e => { l.visible = e.target.checked; if (typeof syncChips === "function") syncChips(); });
@@ -939,13 +982,15 @@ if (MapLayer) {
     { key: "sea-ice", label: "海氷", get: () => layerById("sea-ice")?.visible, set: v => setLayer("sea-ice", v) },
     { key: "quakes", label: "地震", get: () => layerById("quakes")?.visible, set: v => setLayer("quakes", v) },
     { key: "iss", label: "ISS", get: () => layerById("iss")?.visible, set: v => setLayer("iss", v) },
+    { key: "guide", label: "赤道・日付変更線", get: () => GuideLayer?.visible, set: v => { if (GuideLayer) { GuideLayer.visible = v; GuideLayer.userOn = v; } } },
     { key: "map", label: "国境・地名", get: () => MapLayer.visible, set: v => { MapLayer.visible = v; box.querySelector(".viewbox").hidden = !v; } },
     { key: "sky", label: "✦ 夜空", get: () => SkyLayer?.visible, set: v => { if (SkyLayer) SkyLayer.visible = v; } },
-  ].filter(c => c.key === "wind" || c.key === "map" || (c.key === "sky" ? !!SkyLayer : !!layerById(c.key)));
+  ].filter(c => c.key === "wind" || c.key === "map" || (c.key === "sky" ? !!SkyLayer : c.key === "guide" ? !!GuideLayer : !!layerById(c.key)));
   box.querySelector(".chips").innerHTML = CHIPS.map(c => `<button type="button" data-chip="${c.key}">${c.label}</button>`).join("");
   var syncChips = () => box.querySelectorAll("[data-chip]").forEach(b => b.setAttribute("aria-pressed", String(!!CHIPS.find(c => c.key === b.dataset.chip).get())));
   const setMode = k => {
     const m = MODES[k]; VisualParticles.visible = m.wind; MapLayer.visible = m.map; globe.material.uniforms.uNight.value = m.night;
+    if (GuideLayer) GuideLayer.visible = Boolean(m.map || GuideLayer.userOn);   /* ふつうの地球儀では最初から出す。流れる地球では自分で出したときだけ */
     for (const l of SCALAR_LAYERS) { const v = Boolean((m.scalar || l.profile.ground) && (!l.profile.modes || l.profile.modes.includes(k)) && (!l.profile.optIn || l.userOn)) /* undefined だと three.js は「見える」と扱うので必ず真偽値に */; l.visible = v; const cb = document.getElementById("t-" + l.id); if (cb) cb.checked = v; }
     box.querySelectorAll("[data-mode]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.mode === k)));
     box.querySelector(".viewbox").hidden = !m.map;
@@ -1036,7 +1081,7 @@ function loop(now) {
   const dt = Math.min(now - last, 100); last = now;
   frames.push(dt); if (frames.length > 120) frames.shift();
   if (VisualParticles.visible) VisualParticles.step(Math.min(dt / 16.667, 3));
-  MapLayer?.tick(); SkyLayer?.tick();
+  MapLayer?.tick(); SkyLayer?.tick(); GuideLayer?.tick();
   Spin.tick(); controls.update();
   for (const l of FEATURE_LAYERS) l.tick(camera.position.length());
   renderer.render(scene, camera);
