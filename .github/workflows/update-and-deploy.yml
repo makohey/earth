@@ -96,10 +96,10 @@ jobs:
         continue-on-error: true
         run: python scripts/fetch_oisst.py --latest _site/data/latest --cache oisst_cache
 
-      - name: ISS の位置（CelesTrak の軌道要素を1回だけ取り、SGP4 で計算）
+      - name: 人工衛星の位置（CelesTrak の軌道要素を5回に分けて取り、SGP4 で計算）
         if: steps.reuse.outputs.hit != 'true'
         continue-on-error: true
-        run: python scripts/fetch_iss.py --latest _site/data/latest
+        run: python scripts/fetch_sats.py --latest _site/data/latest
 
       # 新しく取った一式を置き場に残す（次にコードを送ったとき、これを使う）。一式が作れなかったときは残さない
       - name: 取った一式を置き場へ

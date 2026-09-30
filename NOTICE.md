@@ -18,7 +18,7 @@
 | 夜空：星・星座線・星座名（試作） | d3-celestial のデータ（BSD-3-Clause, © 2015 Olaf Frohn、全文 `data/sky/LICENSE-d3-celestial.txt`）。星は XHIP、星座は IAU の星座をもとにしたもの。`scripts/prep_sky.py` で変換 | BSD-3-Clause。天の川は輪郭データを使わず、銀河座標から計算したおおまかな帯 |
 | 海の深さ | Natural Earth 10m の水深帯（0〜10000 m）を `scripts/prep_map.py` で画像化 | パブリックドメイン。動かない地図 |
 | 海面水温の平年差 | NOAA NCEI Optimum Interpolation SST v2.1（日平均の anom） | 米国政府の公開データ。1日1枚、同じ日は取り直さない |
-| ISS の位置 | CelesTrak の軌道要素（GP/TLE・NORAD 25544）から SGP4（sgp4 ライブラリ・MIT）で計算 | 出典を表示。地球儀の時計ではなく「いま」の位置。数分〜数十km の誤差あり |
+| 人工衛星の位置 | CelesTrak の軌道要素（GP/TLE。ISS・天宮・ハッブル・ひまわり9号・GNSS グループの GPS／ガリレオ／みちびき）から SGP4（sgp4 ライブラリ・MIT）で計算 | 出典を表示。地球儀の時計ではなく「いま」の位置。高さは縮めて描画（順番は本物） |
 | 夜の街の灯り（試作） | NASA「Earth's City Lights」（three.js の例 `examples/textures/planets/earth_lights_2048.png` を白黒化） | NASA の画像（米国政府の著作物）。何年か前の合成画像で、今夜の灯りではない |
 | 空港の観測（試作） | NOAA / NWS Aviation Weather Center（aviationweather.gov）の METAR | 米国政府の公開データ。電文は加工せず添える |
 | 3D 表示 | three.js r147（jsDelivr から読み込み） | MIT License |

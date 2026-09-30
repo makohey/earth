@@ -740,61 +740,97 @@ const QUAKE_PROFILE = {
 };
 if (ON && Catalog.has("quakes")) FEATURE_LAYERS.push(createPointLayer(createFeatureSource("quakes"), QUAKE_PROFILE));
 
-/* ===== ISS（国際宇宙ステーション）：時計の約束の例外。地球儀の時計ではなく「いま」の位置で動く =====
-   位置は Actions が軌道要素（CelesTrak）から SGP4 で30秒ごとに計算済み。ブラウザは時刻で補間するだけ（見る人から外へは取りに行かない） */
-function createIssLayer() {
-  const src = { id: "iss", meta: Catalog.meta("iss") }, d = Catalog.rows("iss"), RE = 6371;
-  const n = d.pts.length, xyz = new Float32Array(n * 3);
-  d.pts.forEach(([la, lo, alt], i) => toXYZ(la, lo, 1 + alt / RE, xyz, i * 3));
-  const at = ms => { const f = (ms / 1000 - d.t0) / d.step; if (f < 0 || f > n - 1) return null;
+/* ===== 人工衛星（ISS・天宮・ハッブル・ひまわり・GPS・ガリレオ・みちびき）：時計の約束の例外。「いま」の位置で動く =====
+   位置は Actions が軌道要素（CelesTrak）から SGP4 で計算済み。ブラウザは時刻で補間するだけ（見る人から外へは取りに行かない）
+   高さは縮めて描く：半径 = 1 + 0.108 × ln(1 + 高度/500km)。ISS はほぼ本物の高さ、ひまわりは本物の約12分の1。どれが上かの順番は本物のまま */
+const SAT_STYLE = {
+  station:   { color: [1.00, 0.91, 0.66], size: 13, line: "arc",  name: "宇宙ステーション", real: "約400km" },
+  telescope: { color: [0.82, 0.86, 1.00], size: 10, line: "arc",  name: "宇宙望遠鏡", real: "約530km" },
+  weather:   { color: [0.62, 0.95, 1.00], size: 11,               name: "気象衛星（静止）", real: "約36,000km" },
+  gps:       { color: [0.55, 0.70, 1.00], size: 6,                name: "GPS", real: "約20,200km" },
+  galileo:   { color: [0.55, 1.00, 0.82], size: 6,                name: "ガリレオ", real: "約23,200km" },
+  qzss:      { color: [1.00, 0.70, 0.40], size: 9,  line: "loop", name: "みちびき", real: "約32,000〜39,000km", label: "みちびき" },
+};
+const satR = alt => 1 + 0.108 * Math.log(1 + Math.max(0, alt) / 500);
+function createSatLayer() {
+  const id = Catalog.has("sats") ? "sats" : "iss", meta = Catalog.meta(id), raw = Catalog.rows(id);
+  const list = id === "sats" ? raw.sats : [{ id: "iss", kind: "station", name: "ISS (ZARYA)", ja: "ISS（国際宇宙ステーション）", label: "ISS NOW", t0: raw.t0, step: raw.step, pts: raw.pts }];
+  const sats = list.filter(t => SAT_STYLE[t.kind] && t.pts.length > 1).map(t => { const xyz = new Float32Array(t.pts.length * 3); t.pts.forEach(([la, lo, al], i) => toXYZ(la, lo, satR(al), xyz, i * 3)); return { ...t, st: SAT_STYLE[t.kind], xyz, cur: null }; });
+  const at = (s, ms) => { const n = s.pts.length, f = (ms / 1000 - s.t0) / s.step; if (f < 0 || f > n - 1) return null;
     const i = Math.min(n - 2, Math.floor(f)), t = f - i, o = [0, 0, 0];
-    for (let k = 0; k < 3; k++) o[k] = xyz[i*3+k] + (xyz[i*3+3+k] - xyz[i*3+k]) * t;
-    const [la0, lo0, a0] = d.pts[i], [, , a1] = d.pts[i + 1], r = Math.hypot(...o);
+    for (let k = 0; k < 3; k++) o[k] = s.xyz[i*3+k] + (s.xyz[i*3+3+k] - s.xyz[i*3+k]) * t;
+    const r = Math.hypot(...o), a0 = s.pts[i][2], a1 = s.pts[i + 1][2];
     return { p: o, lat: Math.asin(o[1] / r) / D2R, lon: Math.atan2(-o[2], o[0]) / D2R, alt: a0 + (a1 - a0) * t }; };
   const group = new THREE.Group(); group.renderOrder = 4; scene.add(group);
-  const SPAN = 46 * 60000, SEG = 92;                                // 前後46分（ほぼ半周ずつ）
-  const mkLine = (mat) => { const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.BufferAttribute(new Float32Array((SEG + 1) * 3), 3)); const l = new THREE.Line(g, mat); l.frustumCulled = false; group.add(l); return l; };
-  const past = mkLine(new THREE.LineBasicMaterial({ color: 0xffe9a8, transparent: true, opacity: 0.55, depthWrite: false }));
-  const next = mkLine(new THREE.LineDashedMaterial({ color: 0xffe9a8, transparent: true, opacity: 0.35, depthWrite: false, dashSize: 0.012, gapSize: 0.01 }));
-  const dotGeo = new THREE.BufferGeometry(); dotGeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(3), 3));
-  const dot = new THREE.Points(dotGeo, new THREE.ShaderMaterial({ uniforms: { uSize: { value: 15 * renderer.getPixelRatio() }, uT: { value: 0 } }, transparent: true, depthWrite: false,
-    vertexShader: `uniform float uSize; void main(){ gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); gl_PointSize = uSize; }`,
-    fragmentShader: `uniform float uT; void main(){ float r = length(gl_PointCoord - 0.5); if (r > 0.5) discard;
+  /* 点：全部の衛星を一つの点群で。色と大きさは種類ごと */
+  const N = sats.length, pos = new Float32Array(N * 3), col = new Float32Array(N * 3), siz = new Float32Array(N);
+  sats.forEach((s, i) => { col.set(s.st.color, i * 3); siz[i] = s.st.size; });
+  const dotGeo = new THREE.BufferGeometry();
+  dotGeo.setAttribute("position", new THREE.BufferAttribute(pos, 3)); dotGeo.setAttribute("aCol", new THREE.BufferAttribute(col, 3)); dotGeo.setAttribute("aSize", new THREE.BufferAttribute(siz, 1));
+  const dots = new THREE.Points(dotGeo, new THREE.ShaderMaterial({ uniforms: { uPR: { value: renderer.getPixelRatio() }, uT: { value: 0 } }, transparent: true, depthWrite: false,
+    vertexShader: `attribute vec3 aCol; attribute float aSize; uniform float uPR; varying vec3 vCol; void main(){ vCol = aCol; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); gl_PointSize = aSize * uPR; }`,
+    fragmentShader: `uniform float uT; varying vec3 vCol; void main(){ float r = length(gl_PointCoord - 0.5); if (r > 0.5) discard;
       float core = smoothstep(0.20, 0.10, r), halo = smoothstep(0.5, 0.2, r) * (0.35 + 0.2 * sin(uT * 3.0));
-      gl_FragColor = vec4(mix(vec3(1.0,0.86,0.45), vec3(1.0), core), max(core, halo)); }` }));
-  dot.frustumCulled = false; group.add(dot);
-  const label = makeTextSprite("ISS NOW", "rgba(255,236,170,0.98)", 700, 12.5); group.add(label);
-  const fill = (line, from, to) => { const a = line.geometry.attributes.position; let last = null;
-    for (let k = 0; k <= SEG; k++) { const q = at(from + (to - from) * k / SEG); if (q) last = q.p; if (last) a.setXYZ(k, ...last); }
-    a.needsUpdate = true; line.computeLineDistances?.(); };
-  let on = true, cur = null, lastBuild = 0;
-  const cam = new THREE.Vector3(), wp = new THREE.Vector3();
-  return {
-    id: "iss", source: src, feats: [], profile: {
-      describe() { const m = src.meta, q = at(Date.now());
-        return `${q ? `いまの高度 約<span class="num">${Math.round(q.alt)}</span> km・地球を約90分で1周` : `<span class="warn">いまの時刻の位置がありません（計算の範囲外）</span>`}<br>光る点＝いまの位置、実線＝さっき通った道、点線＝これから通る道（前後それぞれ約46分）<br>${m.caution}<br>軌道要素の時刻 <span class="num">${fmtUTC(new Date(m.tleEpoch))}</span><br><a href="https://spotthestation.nasa.gov/" target="_blank" rel="noopener" style="color:var(--accent)">肉眼で見える時刻（NASA Spot the Station）</a><br>出典：${m.credit}`; },
-      present(f) { return `ISS（国際宇宙ステーション）　高度 約<span class="num">${Math.round(f.alt)} km</span>　<span class="num">${Math.abs(f.lat).toFixed(1)}°${f.lat >= 0 ? "N" : "S"} ${Math.abs(f.lon).toFixed(1)}°${f.lon >= 0 ? "E" : "W"}</span> の上空 <span style="color:var(--ink-faint)">（いまの位置・計算値）</span>`; },
+      gl_FragColor = vec4(mix(vCol, vec3(1.0), core * 0.8), max(core, halo)); }` }));
+  dots.frustumCulled = false; group.add(dots);
+  /* 線：低い衛星は前後46分の通り道（実線＝通った道／点線＝これから）。みちびきは24時間分の「8の字」 */
+  const SPAN = 46 * 60000, SEG = 92, arcs = [];
+  const mkLine = (n, mat) => { const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(n * 3), 3)); const l = new THREE.Line(g, mat); l.frustumCulled = false; group.add(l); return l; };
+  for (const s of sats) {
+    const hex = new THREE.Color(...s.st.color).getHex();
+    if (s.st.line === "arc") arcs.push({ s,
+      past: mkLine(SEG + 1, new THREE.LineBasicMaterial({ color: hex, transparent: true, opacity: 0.5, depthWrite: false })),
+      next: mkLine(SEG + 1, new THREE.LineDashedMaterial({ color: hex, transparent: true, opacity: 0.32, depthWrite: false, dashSize: 0.012, gapSize: 0.01 })) });
+    if (s.st.line === "loop") { const l = mkLine(s.pts.length, new THREE.LineBasicMaterial({ color: hex, transparent: true, opacity: 0.28, depthWrite: false })); l.geometry.attributes.position.array.set(s.xyz); l.geometry.attributes.position.needsUpdate = true; }
+  }
+  const fill = (line, s, from, to) => { const a = line.geometry.attributes.position; let last = null;
+    for (let k = 0; k <= SEG; k++) { const q = at(s, from + (to - from) * k / SEG); if (q) last = q.p; if (last) a.setXYZ(k, ...last); }
+    a.needsUpdate = true; line.computeLineDistances(); };
+  /* 名札：名前のある衛星と、みちびき */
+  const labels = sats.map(s => { const text = s.label || s.st.label; if (!text) return null; const sp = makeTextSprite(text, `rgba(${s.st.color.map(c => Math.round(255 * (0.55 + 0.45 * c))).join(",")},0.98)`, 700, s.kind === "station" ? 12.5 : 11); group.add(sp); return sp; });
+  const cam = new THREE.Vector3(), wp = new THREE.Vector3(), v3 = new THREE.Vector3();
+  /* 地球の陰に隠れているか（カメラから衛星までの線が地球を通るか） */
+  const hidden = p => { const c = camera.position, dx = p[0] - c.x, dy = p[1] - c.y, dz = p[2] - c.z, L2 = dx*dx + dy*dy + dz*dz;
+    const t = Math.min(1, Math.max(0, -(c.x*dx + c.y*dy + c.z*dz) / L2)); return Math.hypot(c.x + t*dx, c.y + t*dy, c.z + t*dz) < 0.995; };
+  let on = true, lastBuild = 0;
+  const counts = {}; for (const s of sats) counts[s.kind] = (counts[s.kind] || 0) + 1;
+  const fmtKm = a => a >= 10000 ? `${(a / 10000).toFixed(1)}万` : Math.round(a).toLocaleString();
+  const layer = {
+    id: "sats", source: { id, meta: { ...meta, title: "人工衛星", kind: "計算（軌道要素から）" } }, feats: [],
+    profile: {
+      describe() {
+        const rows = Object.entries(SAT_STYLE).filter(([k]) => counts[k]).map(([k, st]) => `<span style="color:rgb(${st.color.map(c => Math.round(c * 255)).join(",")})">●</span> ${st.name} <span class="num">${counts[k]}</span>機（本当の高さ ${st.real}）`).join("<br>");
+        return `${rows}<br>上から順に：ひまわり・みちびき ＞ ガリレオ ＞ GPS ＞ ハッブル ＞ 宇宙ステーション。<b>高さは縮めて描いています</b>（順番は本物のまま。ISS はほぼ本物の高さ）<br>ISS・天宮・ハッブル：実線＝さっき通った道、点線＝これから（前後約46分）。みちびき：日本とオーストラリアの上を行き来する「8の字」（1日で一周）。ひまわり：地球と同じ速さで回るので、いつも同じ場所に止まって見える<br>${meta.caution || ""}<br>点をタップで名前と本当の高さ<br><a href="https://spotthestation.nasa.gov/" target="_blank" rel="noopener" style="color:var(--accent)">ISS が肉眼で見える時刻（NASA）</a>・<a href="https://qzss.go.jp/" target="_blank" rel="noopener" style="color:var(--accent)">みちびき（内閣府）</a><br>出典：${meta.credit}`; },
+      present(s) { const q = s.cur; return `${s.ja}　<span class="num">${s.name}</span>　本当の高さ 約<span class="num">${fmtKm(q.alt)} km</span>　<span class="num">${Math.abs(q.lat).toFixed(1)}°${q.lat >= 0 ? "N" : "S"} ${Math.abs(q.lon).toFixed(1)}°${q.lon >= 0 ? "E" : "W"}</span> の上空 <span style="color:var(--ink-faint)">（いまの位置・計算値）</span>`; },
     },
     set visible(v) { on = v; group.visible = v; }, get visible() { return on; },
-    get shown() { return on && !!cur; },
+    get shown() { return false; },                                 // 地面のタップ一覧には入れない（衛星は画面上の点でタップ）
+    nearest() { return null; },
     tick() {
       if (!on) return;
-      const now = Date.now(); cur = at(now);
-      group.visible = !!cur; if (!cur) return;
-      if (now - lastBuild > 5000) { lastBuild = now; fill(past, now - SPAN, now); fill(next, now, now + SPAN); }
-      past.geometry.attributes.position.setXYZ(SEG, ...cur.p); past.geometry.attributes.position.needsUpdate = true;
-      next.geometry.attributes.position.setXYZ(0, ...cur.p); next.geometry.attributes.position.needsUpdate = true; next.computeLineDistances();
-      dot.geometry.attributes.position.setXYZ(0, ...cur.p); dot.geometry.attributes.position.needsUpdate = true;
-      dot.material.uniforms.uT.value = now / 1000;
-      const h = stage.clientHeight || 800, s = label.userData.px / h * 2 * Math.tan(camera.fov / 2 * D2R);
-      wp.set(...cur.p); const r = wp.length(); wp.multiplyScalar((r + 0.03) / r); label.position.copy(wp);
-      label.scale.set(s * label.userData.aspect, s, 1);
-      cam.copy(camera.position); label.visible = wp.clone().normalize().dot(cam.normalize()) > 0.08;   // 地球の裏側では札を出さない
+      const now = Date.now(), h = stage.clientHeight || 800, k = 2 * Math.tan(camera.fov / 2 * D2R) / h;
+      let any = false;
+      sats.forEach((s, i) => { s.cur = at(s, now); const p = s.cur ? s.cur.p : [0, 0, 0]; pos[i*3] = p[0]; pos[i*3+1] = p[1]; pos[i*3+2] = p[2]; siz[i] = s.cur ? s.st.size : 0; if (s.cur) any = true; });
+      dotGeo.attributes.position.needsUpdate = true; dotGeo.attributes.aSize.needsUpdate = true;
+      group.visible = any; if (!any) return;
+      dots.material.uniforms.uT.value = now / 1000;
+      if (now - lastBuild > 5000) { lastBuild = now; for (const a of arcs) { fill(a.past, a.s, now - SPAN, now); fill(a.next, a.s, now, now + SPAN); } }
+      for (const a of arcs) if (a.s.cur) { a.past.geometry.attributes.position.setXYZ(SEG, ...a.s.cur.p); a.past.geometry.attributes.position.needsUpdate = true;
+        a.next.geometry.attributes.position.setXYZ(0, ...a.s.cur.p); a.next.geometry.attributes.position.needsUpdate = true; a.next.computeLineDistances(); }
+      labels.forEach((sp, i) => { if (!sp) return; const s = sats[i]; if (!s.cur || hidden(s.cur.p)) { sp.visible = false; return; }
+        wp.set(...s.cur.p); const r = wp.length(); wp.multiplyScalar((r + 0.03) / r); sp.position.copy(wp); sp.visible = true;
+        const sc = sp.userData.px * k; sp.scale.set(sc * sp.userData.aspect, sc, 1); });
     },
-    nearest(lon, lat, maxDeg) { if (!cur) return null; const dd = Math.hypot((((cur.lon - lon + 540) % 360) - 180) * Math.cos(lat * D2R), cur.lat - lat); return dd < Math.max(maxDeg, 3) ? cur : null; },
+    /** 画面上で一番近い衛星（タップ用）。地球の陰にあるものは選ばない */
+    pickScreen(ndcPt) { let best = null, bd = 0.05;
+      for (const s of sats) { if (!s.cur || hidden(s.cur.p)) continue; v3.set(...s.cur.p).project(camera);
+        const d = Math.hypot(v3.x - ndcPt.x, (v3.y - ndcPt.y) * (stage.clientHeight / stage.clientWidth || 1)); if (d < bd) { bd = d; best = s; } }
+      return best; },
   };
+  return layer;
 }
-if (ON && Catalog.has("iss")) { try { FEATURE_LAYERS.push(createIssLayer()); } catch (e) { console.warn("ISS を出せませんでした", e); } }
+let SatLayer = null;
+if (ON && (Catalog.has("sats") || Catalog.has("iss"))) { try { SatLayer = createSatLayer(); FEATURE_LAYERS.push(SatLayer); } catch (e) { console.warn("人工衛星を出せませんでした", e); } }
 
 (function addCoast() {
   const seg = [];
@@ -882,7 +918,7 @@ const VisualParticles = (() => {
 /* ===== カメラと操作 ===== */
 const controls = new THREE.OrbitControls(camera, renderer.domElement);
 controls.enablePan = false; controls.enableDamping = true; controls.dampingFactor = 0.08;
-controls.rotateSpeed = 0.45; controls.zoomSpeed = 0.6; controls.minDistance = 1.3; controls.maxDistance = 7;
+controls.rotateSpeed = 0.45; controls.zoomSpeed = 0.6; controls.minDistance = 1.3; controls.maxDistance = 10;   /* 人工衛星の外側（ひまわり）まで入るよう遠くまで引ける */
 { const a = stage.clientWidth / Math.max(1, stage.clientHeight);
   const dist = Math.min(6.5, Math.max(3.1, 1.1 / (Math.tan(19 * D2R) * a)));
   const p = [0,0,0]; toXYZ(34, 138, dist, p, 0); camera.position.set(p[0], p[1], p[2]); }
@@ -1032,7 +1068,7 @@ if (MapLayer) {
     { key: "sst-anom", label: "海水温（平年差）", get: () => layerById("sst-anom")?.visible, set: v => setLayer("sst-anom", v) },
     { key: "sea-ice", label: "海氷", get: () => layerById("sea-ice")?.visible, set: v => setLayer("sea-ice", v) },
     { key: "quakes", label: "地震", get: () => layerById("quakes")?.visible, set: v => setLayer("quakes", v) },
-    { key: "iss", label: "ISS", get: () => layerById("iss")?.visible, set: v => setLayer("iss", v) },
+    { key: "sats", label: "人工衛星", get: () => layerById("sats")?.visible, set: v => setLayer("sats", v) },
     { key: "aurora", label: "オーロラ帯", get: () => AuroraLayer?.visible, set: v => { if (AuroraLayer) { AuroraLayer.visible = v; AuroraLayer.userOn = v; } } },
     { key: "guide", label: "赤道・日付変更線", get: () => GuideLayer?.visible, set: v => { if (GuideLayer) { GuideLayer.visible = v; GuideLayer.userOn = v; } } },
     { key: "map", label: "国境・地名", get: () => MapLayer.visible, set: v => { MapLayer.visible = v; box.querySelector(".viewbox").hidden = !v; } },
@@ -1107,6 +1143,7 @@ renderer.domElement.addEventListener("pointerup", e => {
   const r = renderer.domElement.getBoundingClientRect();
   ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
   raycaster.setFromCamera(ndc, camera);
+  const sat = SatLayer?.visible && SatLayer.pickScreen(ndc); if (sat) { showPick(SatLayer.profile.present(sat)); return; }   /* 衛星は画面上の点でタップ */
   const hit = raycaster.intersectObject(globe)[0]; if (!hit) return;
   const n = hit.point.clone().normalize(), la = Math.asin(n.y) / D2R, lo = Math.atan2(-n.z, n.x) / D2R;
   const [u, v] = field.sample(lo, la, Clock.now()), sp = Math.hypot(u, v), from = (Math.atan2(-u, -v) / D2R + 360) % 360;
