@@ -42,6 +42,9 @@ PARAMS = {
     (10, 2, 0): "icec",        # ICEC   海氷の割合 0〜1
 }
 
+# 上空の風（大気循環を見る「風の高さ」）：気圧面 hPa → 見せる名前
+UPPER_LEVELS = {850: "約1.5km", 500: "約5.5km", 250: "約10km"}
+
 RAIN_MAX = 60.0                # mm/h（これ以上は同じ色）
 RAIN_ZERO = 0.05               # mm/h 未満は「雨なし」
 CREDIT = "NOAA / NCEP GFS（米国政府の著作物・パブリックドメイン）"
@@ -63,6 +66,7 @@ def url_for(cycle: dt.datetime) -> str:
         "file": f"gfs.t{h}z.pgrb2.1p00.f{FHOUR:03d}",
         "var_UGRD": "on", "var_VGRD": "on", "var_PRATE": "on", "var_PRMSL": "on", "lev_mean_sea_level": "on", "var_ICEC": "on",
         "lev_10_m_above_ground": "on", "lev_surface": "on",
+        "lev_850_mb": "on", "lev_500_mb": "on", "lev_250_mb": "on",
     }
     return NOMADS + "?" + urllib.parse.urlencode(q)
 
@@ -117,6 +121,11 @@ def read_grib(path: str) -> dict:
                 name = PARAMS.get(key)
                 if not name:
                     continue
+                if name in ("u", "v") and eccodes.codes_get(h, "typeOfLevel") == "isobaricInhPa":
+                    lev = int(eccodes.codes_get(h, "level"))
+                    if lev not in UPPER_LEVELS:
+                        continue
+                    name = f"{name}{lev}"                   # 上空の風：u850 / v850 など
                 ni, nj = eccodes.codes_get(h, "Ni"), eccodes.codes_get(h, "Nj")
                 vals = np.array(eccodes.codes_get_values(h), dtype="float64")
                 if eccodes.codes_get(h, "bitmapPresent"):
@@ -249,6 +258,23 @@ def build(fields: dict, out: str, source_url: str | None):
                 "encoding": {"type": "linear", "scale": 0.1, "offset": 1000, "missing": -32768},
             },
         }
+    for lev, alt in UPPER_LEVELS.items():            # 上空の風（無くても地上の風はそのまま）
+        uu, vv = fields.get(f"u{lev}"), fields.get(f"v{lev}")
+        if uu is None or vv is None:
+            continue
+        with open(os.path.join(out, f"wind{lev}.bin"), "wb") as f:
+            f.write(encode_wind(uu["a"], vv["a"]))
+        manifest["layers"][f"wind-{lev}"] = {
+            "type": "flow", "file": f"wind{lev}.bin", "format": "int16-uv", "lazy": True,   # 選ばれたときだけ読む
+            "grid": {"nx": uu["nx"], "ny": uu["ny"], "lo1": uu["lon0"], "la1": uu["lat0"], "dx": uu["dx"], "dy": uu["dy"], "scale": 100},
+            "meta": {
+                "title": "風", "level": f"{alt}（{lev} hPa）", "kind": "モデル計算",
+                "model": f"GFS 予報（{lev} hPa 面の風・初期値 +{FHOUR}時間）",
+                "validTime": iso(uu["to"]), "issuedTime": iso(uu["issued"]),
+                "usualIntervalH": CYCLE_H, "delivery": "自動取得（GitHub Actions・約6時間ごと）",
+                "resolution": res(uu), "units": "m/s", "credit": CREDIT,
+            },
+        }
     if ic is not None:
         manifest["layers"]["sea-ice"] = {
             "type": "scalar", "file": "seaice.bin", "format": "uint8",
@@ -266,7 +292,7 @@ def build(fields: dict, out: str, source_url: str | None):
     with open(os.path.join(out, "manifest.json"), "w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=1)
     log("書き出し完了:", out, "初期時刻", iso(u["issued"]), "有効時刻", iso(u["to"]))
-    print(f"::notice::GFS 書き出し: 初期時刻 {iso(u['issued'])}／有効時刻 {iso(u['to'])}／気圧 {'あり' if 'prmsl' in fields else 'なし'}／海氷 {'あり' if 'icec' in fields else 'なし'}", flush=True)
+    print(f"::notice::GFS 書き出し: 初期時刻 {iso(u['issued'])}／有効時刻 {iso(u['to'])}／気圧 {'あり' if 'prmsl' in fields else 'なし'}／海氷 {'あり' if 'icec' in fields else 'なし'}／上空の風 {sorted(int(k[1:]) for k in fields if k.startswith('u') and k[1:].isdigit())}", flush=True)
 
 
 def main():

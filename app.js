@@ -17,6 +17,7 @@ async function loadCatalog() {
   const bufs = {}, extra = {};
   const [land, coast] = await Promise.all([getBin("data/land.bin"), getBin("data/coast.bin")]);
   await Promise.all(Object.entries(manifest.layers).map(async ([id, L]) => {
+    if (L.lazy) return;                                   // 選ばれたときだけ読む層（上空の風など）
     bufs[id] = await getBin(base + L.file);
     if (L.meta.licenseFile) { try { const r = await fetch(base + L.meta.licenseFile); if (r.ok) extra[id] = await r.text(); } catch (_) {} }
   }));
@@ -26,6 +27,8 @@ async function loadCatalog() {
   return {
     mode: manifest.mode, generatedAt: manifest.generatedAt ? new Date(manifest.generatedAt) : null, base,
     has: id => id in manifest.layers,
+    /** あとから読む層を読み込む（一度だけ） */
+    async load(id) { if (!bufs[id]) bufs[id] = await getBin(base + manifest.layers[id].file); },
     meta: id => (manifest.layers[id] || MAP[id]).meta,
     license: id => extra[id] || null,
     gridInfo: id => manifest.layers[id].grid,
@@ -137,7 +140,15 @@ const LINE_STOPS = [
   [30, [1.00, 0.40, 0.46]],
 ];
 
-const field = createGridFlowField("wind-10m");
+/* 風の高さ：地上／約1.5km／約5.5km／約10km。上空ほど速いので、線の速さと色の幅を高さごとに変える（scale） */
+const WIND_LEVELS = [
+  { id: "wind-10m", label: "地上", scale: 1 },
+  { id: "wind-850", label: "約1.5km", scale: 1.4 },
+  { id: "wind-500", label: "約5.5km", scale: 2.2 },
+  { id: "wind-250", label: "約10km", scale: 3.5 },
+];
+let field = createGridFlowField("wind-10m"), windScale = 1;
+const flowCache = { "wind-10m": field };
 const stage = document.getElementById("stage");
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -674,11 +685,11 @@ const VisualParticles = (() => {
     frame++;
     const slot = frame % SLOTS, v0 = slot * N * 2;
     for (let i = 0; i < N; i++) {
-      const [u, v] = field.sample(lon[i], lat[i], Clock.now());
+      const [u, v] = field.sample(lon[i], lat[i], Clock.now()), ws = windScale;
       const sp = Math.hypot(u, v);
       toXYZ(lat[i], lon[i], R, tmpA, 0);
       const c = Math.max(0.15, Math.cos(lat[i] * D2R));
-      lat[i] += v * STEP * dtScale; lon[i] += u * STEP * dtScale / c;
+      lat[i] += v * STEP / ws * dtScale; lon[i] += u * STEP / ws * dtScale / c;
       if (lon[i] > 180) lon[i] -= 360; else if (lon[i] < -180) lon[i] += 360;
       age[i] += dtScale;
       const vi = v0 + i * 2, p = vi * 3;
@@ -687,7 +698,7 @@ const VisualParticles = (() => {
       }
       toXYZ(lat[i], lon[i], R, tmpB, 0);
       pos[p] = tmpA[0]; pos[p+1] = tmpA[1]; pos[p+2] = tmpA[2]; pos[p+3] = tmpB[0]; pos[p+4] = tmpB[1]; pos[p+5] = tmpB[2];
-      birth[vi] = birth[vi+1] = frame; spd[vi] = spd[vi+1] = sp;
+      birth[vi] = birth[vi+1] = frame; spd[vi] = spd[vi+1] = sp / ws;   // 色は高さごとの幅で
     }
     aPos.updateRange.offset = v0 * 3; aPos.updateRange.count = N * 6; aPos.needsUpdate = true;
     aBirth.updateRange.offset = v0; aBirth.updateRange.count = N * 2; aBirth.needsUpdate = true;
@@ -776,7 +787,16 @@ document.getElementById("d-note").textContent = Catalog.mode === "live"
   : "いまは最新データが見つからないため、固定のサンプル（風は2014年、雨は2021年）で動いています。線の速さと長さは見やすさのための表示倍率で、風速の値そのものは変えていません。";
 const css = c => `rgb(${c.map(x => Math.round(x * 255)).join(",")})`;
 document.getElementById("d-bar").style.background = `linear-gradient(90deg, ${LINE_STOPS.map(([s, c]) => `${css(c)} ${(s / 30 * 100).toFixed(1)}%`).join(", ")})`;
-document.getElementById("d-ticks").innerHTML = [0, 10, 20, 30].map(v => `<span>${v}${v === 30 ? " m/s" : ""}</span>`).join("");
+const drawWindTicks = () => { document.getElementById("d-ticks").innerHTML = [0, 10, 20, 30].map(v => `<span>${Math.round(v * windScale)}${v === 30 ? " m/s" : ""}</span>`).join(""); };
+drawWindTicks();
+/** 風の高さを切り替える（上空の風は、このとき初めて読み込む） */
+async function setWindLevel(k) {
+  const L = WIND_LEVELS[k]; if (!Catalog.has(L.id)) return;
+  if (!flowCache[L.id]) { await Catalog.load(L.id); flowCache[L.id] = createGridFlowField(L.id); }
+  field = flowCache[L.id]; windScale = L.scale;
+  const m = Catalog.meta(L.id); document.getElementById("d-level").textContent = `${m.level}・${m.kind}`;
+  drawWindTicks();
+}
 
 /* 層ごとの説明：どのデータも同じ書式で、目録のメタデータから作る */
 const fmtSpan = m => m.validFrom ? `${m.validFrom.slice(0,16).replace("T"," ")}〜${m.validTo.slice(11,16)} UTC` : `${m.validTime.slice(0,16).replace("T"," ")} UTC`;
@@ -821,6 +841,8 @@ if (MapLayer) {
   const box = document.createElement("div"); box.className = "modes";
   box.innerHTML = `<div class="seg" role="group" aria-label="見せ方">${Object.entries(MODES).map(([k, m]) => `<button type="button" data-mode="${k}">${m.label}</button>`).join("")}</div>
     <div class="chips" role="group" aria-label="層を出す・消す"></div>
+    ${WIND_LEVELS.slice(1).some(L => Catalog.has(L.id)) ? `<div class="windh"><div class="seg small" role="group" aria-label="風の高さ">${WIND_LEVELS.filter(L => Catalog.has(L.id)).map(L => `<button type="button" data-wlev="${WIND_LEVELS.indexOf(L)}" aria-pressed="${L.id === "wind-10m"}">${L.label}</button>`).join("")}</div>
+      <p class="note">風の高さ：上に行くほど地球規模の流れ（偏西風・ジェット気流）が見えます。上空の線は速さに合わせて色の幅を変えています</p></div>` : ""}
     <div class="viewbox"><div class="seg small" role="group" aria-label="国境の見方">${Object.entries(MapLayer.views).map(([k, t]) => `<button type="button" data-view="${k}">${t}</button>`).join("")}</div>
     <p class="note">国境の見方は二つから選べます。どちらも Natural Earth（パブリックドメイン）の見方別データです。</p></div>`;
   const detailEl = document.getElementById("detail"); detailEl.insertBefore(box, detailEl.firstChild);   // 切り替えは一番上に（スクロールなしで届く）
@@ -850,6 +872,7 @@ if (MapLayer) {
   };
   const setView = v => { MapLayer.view = v; box.querySelectorAll("[data-view]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.view === v))); };
   box.addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return;
+    if (b.dataset.wlev) { const k = +b.dataset.wlev; setWindLevel(k).then(() => box.querySelectorAll("[data-wlev]").forEach(x => x.setAttribute("aria-pressed", String(x === b)))); return; }
     if (b.dataset.chip) { const c = CHIPS.find(c => c.key === b.dataset.chip); c.set(!c.get()); syncChips(); return; }   /* 一つだけ出す・消す。他の層は勝手に消さない */
     if (b.dataset.mode) setMode(b.dataset.mode); if (b.dataset.view) setView(b.dataset.view); });
   setView("jp"); setMode("flow");
@@ -908,7 +931,7 @@ renderer.domElement.addEventListener("pointerup", e => {
   const n = hit.point.clone().normalize(), la = Math.asin(n.y) / D2R, lo = Math.atan2(-n.z, n.x) / D2R;
   const [u, v] = field.sample(lo, la, Clock.now()), sp = Math.hypot(u, v), from = (Math.atan2(-u, -v) / D2R + 360) % 360;
   const ll = `${Math.abs(la).toFixed(1)}°${la >= 0 ? "N" : "S"} ${Math.abs(lo).toFixed(1)}°${lo >= 0 ? "E" : "W"}`;
-  document.getElementById("d-pick").innerHTML = `<span class="num">${ll}</span>　風速 <span class="num">${sp.toFixed(1)} m/s</span>　${DIRS[Math.round(from / 22.5) % 16]}の風 <span style="color:var(--ink-faint)">（${wm.kind}・格子から補間）</span>`
+  document.getElementById("d-pick").innerHTML = `<span class="num">${ll}</span>　風速${field.meta.level && field.meta.level !== "地上10m" ? "（" + field.meta.level.replace(/（.*）/, "") + "）" : ""} <span class="num">${sp.toFixed(1)} m/s</span>　${DIRS[Math.round(from / 22.5) % 16]}の風 <span style="color:var(--ink-faint)">（${wm.kind}・格子から補間）</span>`
     + SCALAR_LAYERS.filter(l => l.visible).map(l => presentValue(l, l.field.sample(lo, la, Clock.now()))).filter(Boolean).map(t => "<br>" + t).join("")
     + FEATURE_LAYERS.filter(l => l.shown).map(l => { const f = l.nearest(lo, la, 0.5 + 1.2 * (camera.position.length() - 1)); return f ? "<br>" + (l.profile.present ? l.profile.present(f) : presentObs(f)) : ""; }).join("");
   showPick(document.getElementById("d-pick").innerHTML.replace(/<span style="color:var\(--ink-faint\)">[^<]*<\/span>/g, ""));   // 項目ごとに改行したまま
