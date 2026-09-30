@@ -356,20 +356,21 @@ const OBS_PROFILE = {
 };
 function createPointLayer(source, profile) {
   const feats = source.features(Clock.now());
-  const pos = new Float32Array(feats.length * 3), age = new Float32Array(feats.length), size = new Float32Array(feats.length);
-  feats.forEach((f, i) => { toXYZ(f.lat, f.lon, 1.0045, pos, i * 3); age[i] = (Clock.now() - f.time) / 60000 / profile.maxAgeMin; size[i] = profile.sizeOf ? profile.sizeOf(f) : 1; });
+  const pos = new Float32Array(feats.length * 3), age = new Float32Array(feats.length), size = new Float32Array(feats.length), colr = new Float32Array(feats.length * 3);
+  feats.forEach((f, i) => { toXYZ(f.lat, f.lon, 1.0045, pos, i * 3); age[i] = (Clock.now() - f.time) / 60000 / profile.maxAgeMin; size[i] = profile.sizeOf ? profile.sizeOf(f) : 1;
+    const c = profile.colorOf ? profile.colorOf(f) : profile.color; colr[i*3] = c[0]; colr[i*3+1] = c[1]; colr[i*3+2] = c[2]; });
   const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.BufferAttribute(pos, 3)); geo.setAttribute("aAge", new THREE.BufferAttribute(age, 1)); geo.setAttribute("aSize", new THREE.BufferAttribute(size, 1));
+  geo.setAttribute("position", new THREE.BufferAttribute(pos, 3)); geo.setAttribute("aAge", new THREE.BufferAttribute(age, 1)); geo.setAttribute("aSize", new THREE.BufferAttribute(size, 1)); geo.setAttribute("aCol", new THREE.BufferAttribute(colr, 3));
   const mat = new THREE.ShaderMaterial({
     uniforms: { uSize: { value: profile.size * renderer.getPixelRatio() }, uShow: { value: 0 }, uOpacity: { value: 1 }, uColor: { value: new THREE.Vector3(...profile.color) } },
     transparent: true, depthWrite: false,
-    vertexShader: `attribute float aAge; attribute float aSize; uniform float uSize; varying float vAge;
-      void main(){ vAge = aAge; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); gl_PointSize = uSize * aSize; }`,
-    fragmentShader: `uniform float uShow; uniform float uOpacity; uniform vec3 uColor; varying float vAge;
+    vertexShader: `attribute float aAge; attribute float aSize; attribute vec3 aCol; uniform float uSize; varying float vAge; varying vec3 vCol;
+      void main(){ vAge = aAge; vCol = aCol; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); gl_PointSize = uSize * aSize; }`,
+    fragmentShader: `uniform float uShow; uniform float uOpacity; uniform vec3 uColor; varying float vAge; varying vec3 vCol;
       void main(){ vec2 d = gl_PointCoord - 0.5; float r = length(d); if (r > 0.5) discard;
         float ring = smoothstep(0.5, 0.36, r) * (0.55 + 0.45 * smoothstep(0.30, 0.18, r));
         float a = ring * uShow * uOpacity * mix(1.0, 0.45, clamp(vAge, 0.0, 1.0));
-        if (a < 0.01) discard; gl_FragColor = vec4(uColor, a); }`,
+        if (a < 0.01) discard; gl_FragColor = vec4(vCol, a); }`,
   });
   const pts = new THREE.Points(geo, mat); pts.renderOrder = 3; scene.add(pts);
   let on = true;
@@ -594,9 +595,16 @@ const QUAKE_PROFILE = {
   showFrom: 99, fullAt: 98,            // 引いた地球でも出す（数が少ないので）
   maxAgeMin: 24 * 60,
   sizeOf: f => Math.max(1, Math.min(6, (f.props.mag - 1.5) * 0.9)),
+  /* 色＝マグニチュード（USGS）。震度ではない */
+  MAG_STOPS: [[2.5, [1.00, 0.86, 0.45]], [4, [1.00, 0.66, 0.30]], [5, [1.00, 0.42, 0.26]], [6, [0.95, 0.22, 0.32]], [7, [0.85, 0.20, 0.75]]],
+  colorOf(f) { const S = this.MAG_STOPS, m = f.props.mag; if (m <= S[0][0]) return S[0][1];
+    for (let k = 1; k < S.length; k++) if (m <= S[k][0]) { const t = (m - S[k-1][0]) / (S[k][0] - S[k-1][0]); return S[k-1][1].map((c, i) => c + (S[k][1][i] - c) * t); }
+    return S[S.length - 1][1]; },
   describe(l) {
     const m = l.source.meta, big = l.feats.filter(f => f.props.mag >= 5).length;
-    return `時計の時刻までの24時間・M2.5以上 <span class="num">${l.feats.length}</span>件（M5以上 <span class="num">${big}</span>件）<br>点の大きさ＝マグニチュード・点をタップで詳細<br>${m.caution}<br><a href="https://www.jma.go.jp/bosai/map.html#contents=earthquake_map" target="_blank" rel="noopener" style="color:var(--accent)">気象庁の地震情報</a><br>出典：${m.credit}`;
+    const bar = this.MAG_STOPS.map(([m, c], k) => `rgb(${c.map(x => Math.round(x * 255)).join(",")}) ${(k / (this.MAG_STOPS.length - 1) * 100).toFixed(0)}%`).join(", ");
+    return `時計の時刻までの24時間・M2.5以上 <span class="num">${l.feats.length}</span>件（M5以上 <span class="num">${big}</span>件）<br>点の大きさと色＝マグニチュード（USGS）・点をタップで詳細
+      <div class="legend" style="margin:6px 0"><div class="bar" style="background:linear-gradient(90deg, ${bar})"></div><div class="ticks">${this.MAG_STOPS.map(([m]) => `<span>M${m}${m === 7 ? "+" : ""}</span>`).join("")}</div></div>${m.caution}<br><a href="https://www.jma.go.jp/bosai/map.html#contents=earthquake_map" target="_blank" rel="noopener" style="color:var(--accent)">気象庁の地震情報</a><br>出典：${m.credit}`;
   },
   present(f) {
     const p = f.props, h = (Clock.now() - f.time) / 3600000;
