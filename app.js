@@ -664,6 +664,55 @@ async function createGuideLayer() {
 }
 let GuideLayer = null;
 if (ON) { try { GuideLayer = await createGuideLayer(); } catch (e) { console.warn("赤道・日付変更線を読めませんでした", e); } }
+
+/* ===== オーロラ帯（目安）：データではなく計算。磁気の極（双極子の近似）のまわりの輪を、夜側だけに光らせる =====
+   ・輪の位置：昼側は磁気緯度 約76°、真夜中側は 約66°（夜側ほど低い緯度まで下りてくる、よく知られた形）
+   ・揺らぎ（カーテンのような流れ）は演出。明るさや広がりは実際の宇宙天気を反映していない（のちに NOAA の予測へ差し替える候補） */
+const GEOMAG_POLE = { lat: 80.8, lon: -72.7 };      // 北の磁気の極（地磁気の双極子近似・2025年ごろ。IGRF）
+function createAuroraLayer() {
+  const P = new THREE.Vector3(), q = [0, 0, 0]; toXYZ(GEOMAG_POLE.lat, GEOMAG_POLE.lon, 1, q, 0); P.set(...q).normalize();
+  const E1 = new THREE.Vector3(0, 1, 0).cross(P).normalize(), E2 = P.clone().cross(E1).normalize();
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { uSun: { value: sunDir }, uT: { value: 0 }, uE1: { value: E1 }, uE2: { value: E2 }, uE3: { value: P }, uGain: { value: 1 } },
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    vertexShader: `varying vec3 vN; void main(){ vN = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+    fragmentShader: `uniform vec3 uSun; uniform float uT; uniform vec3 uE1; uniform vec3 uE2; uniform vec3 uE3; uniform float uGain; varying vec3 vN;
+      float h(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+      float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
+        return mix(mix(h(i), h(i+vec2(1,0)), f.x), mix(h(i+vec2(0,1)), h(i+vec2(1,1)), f.x), f.y); }
+      float oval(vec3 m, vec3 s, float hemi){
+        float colat = degrees(acos(clamp(hemi * m.z, -1.0, 1.0)));
+        if (colat > 40.0) return 0.0;
+        float lam = atan(m.y, m.x), phi = lam - atan(s.y, s.x), c = cos(phi);          /* c=1 昼（正午）側、c=-1 真夜中側 */
+        float fold = 1.6 * sin(lam * 5.0 + uT * 0.11 + hemi) + 1.1 * (vn(vec2(lam * 9.0, uT * 0.07 + hemi * 7.0)) - 0.5) * 2.0;   /* カーテンのうねり（演出） */
+        float center = 19.0 - 5.0 * c + fold, width = 2.6 + 1.6 * (0.5 - 0.5 * c);
+        float d = (colat - center) / width, band = exp(-d * d);
+        float rays = 0.55 + 0.45 * vn(vec2(lam * 70.0 + uT * 0.35, uT * 0.9 + hemi * 3.0));        /* 細い光の筋のまたたき（演出） */
+        float strength = 0.35 + 0.65 * (0.5 - 0.5 * c);                                           /* 真夜中側ほど明るい */
+        return band * rays * strength;
+      }
+      void main(){
+        vec3 n = normalize(vN), m = vec3(dot(n, uE1), dot(n, uE2), dot(n, uE3)), su = normalize(uSun), s = vec3(dot(su, uE1), dot(su, uE2), dot(su, uE3));
+        float dark = smoothstep(0.02, -0.16, dot(n, su));                                          /* 空が暗い所だけ */
+        float a = (oval(m, s, 1.0) + oval(m, s, -1.0)) * dark * uGain;
+        if (a < 0.004) discard;
+        vec3 green = vec3(0.30, 1.00, 0.55), top = vec3(0.95, 0.35, 0.60);
+        gl_FragColor = vec4(mix(green, top, smoothstep(0.55, 1.0, a) * 0.25) * a, a * 0.9);
+      }`,
+  });
+  const mesh = new THREE.Mesh(new THREE.SphereGeometry(1 + 110 / 6371, 160, 120), mat);     // 地上 約110km（緑の光の高さ）
+  mesh.renderOrder = 2.5; mesh.visible = false; scene.add(mesh);
+  return {
+    info: { title: "オーロラ帯（目安）", kind: "計算（磁気の極からの目安）・揺らぎは演出",
+      credit: "形：地磁気の双極子の近似（北の磁気の極 約80.8°N・72.7°W、IGRF による）から計算。外部のデータは取りに行きません",
+      note: `オーロラがよく現れる帯を、北と南の磁気の極のまわりに描いています。夜側では低い緯度まで下りてくるので、輪は真夜中側に広がります。空が暗い所だけ光らせています。<b>いま実際に出ているオーロラではありません</b>。揺らぎ（カーテンのようなうねりと光の筋）は見せ方の演出です。宇宙天気が荒れると、帯はもっと明るく、ずっと低い緯度まで広がります<br><a href="https://www.swpc.noaa.gov/products/aurora-30-minute-forecast" target="_blank" rel="noopener" style="color:var(--accent)">いまのオーロラの予測を見たい人はこちら（NOAA 宇宙天気予報センター）</a>` },
+    userOn: false,
+    set visible(v) { mesh.visible = v; }, get visible() { return mesh.visible; },
+    tick(now) { if (mesh.visible) mat.uniforms.uT.value = now / 1000; },
+  };
+}
+let AuroraLayer = null;
+if (ON) { try { AuroraLayer = createAuroraLayer(); } catch (e) { console.warn("オーロラ帯を出せませんでした", e); } }
 if (DEV && Catalog.has("metar")) FEATURE_LAYERS.push(createPointLayer(createFeatureSource("metar"), OBS_PROFILE));
 
 /* 最近の地震：点の大きさ＝マグニチュード（USGS）。古いほど少し薄い。警報・判定はしない */
@@ -951,6 +1000,8 @@ document.getElementById("d-layers").innerHTML = SCALAR_LAYERS.map(l => layerBloc
       <div class="sub">${LAND_ICE.note}<br>出典：${LAND_ICE.credit}</div></div>` : "")
   + (GuideLayer ? `<div class="layer"><label>${GuideLayer.info.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${GuideLayer.info.kind}</span></label>
       <div class="sub">${GuideLayer.info.note}<br>出典：${GuideLayer.info.credit}</div></div>` : "")
+  + (AuroraLayer ? `<div class="layer"><label>${AuroraLayer.info.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${AuroraLayer.info.kind}</span></label>
+      <div class="sub">${AuroraLayer.info.note}<br>出典：${AuroraLayer.info.credit}</div></div>` : "")
   + (SkyLayer ? `<div class="layer"><label>${SKY_INFO.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${SKY_INFO.kind}</span></label>
       <div class="sub">${SKY_INFO.note}${SkyLayer.radiants.length ? "<br>いまの時期の流星群：" + SkyLayer.radiants.map(r => `${r.name}（極大 ${r.peak}）`).join("、") + "。見える数は年や月明かり・雲で大きく変わります" : ""}<br>出典：${SKY_INFO.credit}</div></div>` : "");
 for (const l of FEATURE_LAYERS) document.getElementById("t-" + l.id).addEventListener("change", e => { l.visible = e.target.checked; if (typeof syncChips === "function") syncChips(); });
@@ -982,10 +1033,11 @@ if (MapLayer) {
     { key: "sea-ice", label: "海氷", get: () => layerById("sea-ice")?.visible, set: v => setLayer("sea-ice", v) },
     { key: "quakes", label: "地震", get: () => layerById("quakes")?.visible, set: v => setLayer("quakes", v) },
     { key: "iss", label: "ISS", get: () => layerById("iss")?.visible, set: v => setLayer("iss", v) },
+    { key: "aurora", label: "オーロラ帯", get: () => AuroraLayer?.visible, set: v => { if (AuroraLayer) { AuroraLayer.visible = v; AuroraLayer.userOn = v; } } },
     { key: "guide", label: "赤道・日付変更線", get: () => GuideLayer?.visible, set: v => { if (GuideLayer) { GuideLayer.visible = v; GuideLayer.userOn = v; } } },
     { key: "map", label: "国境・地名", get: () => MapLayer.visible, set: v => { MapLayer.visible = v; box.querySelector(".viewbox").hidden = !v; } },
     { key: "sky", label: "✦ 夜空", get: () => SkyLayer?.visible, set: v => { if (SkyLayer) SkyLayer.visible = v; } },
-  ].filter(c => c.key === "wind" || c.key === "map" || (c.key === "sky" ? !!SkyLayer : c.key === "guide" ? !!GuideLayer : !!layerById(c.key)));
+  ].filter(c => c.key === "wind" || c.key === "map" || (c.key === "sky" ? !!SkyLayer : c.key === "guide" ? !!GuideLayer : c.key === "aurora" ? !!AuroraLayer : !!layerById(c.key)));
   box.querySelector(".chips").innerHTML = CHIPS.map(c => `<button type="button" data-chip="${c.key}">${c.label}</button>`).join("");
   var syncChips = () => box.querySelectorAll("[data-chip]").forEach(b => b.setAttribute("aria-pressed", String(!!CHIPS.find(c => c.key === b.dataset.chip).get())));
   const setMode = k => {
@@ -1081,7 +1133,7 @@ function loop(now) {
   const dt = Math.min(now - last, 100); last = now;
   frames.push(dt); if (frames.length > 120) frames.shift();
   if (VisualParticles.visible) VisualParticles.step(Math.min(dt / 16.667, 3));
-  MapLayer?.tick(); SkyLayer?.tick(); GuideLayer?.tick();
+  MapLayer?.tick(); SkyLayer?.tick(); GuideLayer?.tick(); AuroraLayer?.tick(now);
   Spin.tick(); controls.update();
   for (const l of FEATURE_LAYERS) l.tick(camera.position.length());
   renderer.render(scene, camera);
