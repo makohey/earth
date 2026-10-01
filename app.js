@@ -878,7 +878,7 @@ function createSatLayer() {
       sats.forEach((s, i) => { s.cur = at(s, now); const p = s.cur ? s.cur.p : [0, 0, 0]; pos[i*3] = p[0]; pos[i*3+1] = p[1]; pos[i*3+2] = p[2]; siz[i] = s.cur ? s.st.size : 0; if (s.cur) any = true; });
       dotGeo.attributes.position.needsUpdate = true; dotGeo.attributes.aSize.needsUpdate = true;
       group.visible = any; if (!any) return;
-      dots.material.uniforms.uT.value = now / 1000;
+      dots.material.uniforms.uT.value = (now / 1000) % 2094.395;   /* 大きすぎる数を渡すと、スマホの GPU では点が消える（sin が壊れる）。2π/3 の倍数で折り返す */
       if (now - lastBuild > 5000) { lastBuild = now; for (const a of arcs) { fill(a.past, a.s, now - SPAN, now); fill(a.next, a.s, now, now + SPAN); } }
       for (const a of arcs) if (a.s.cur) { a.past.geometry.attributes.position.setXYZ(SEG, ...a.s.cur.p); a.past.geometry.attributes.position.needsUpdate = true;
         a.next.geometry.attributes.position.setXYZ(0, ...a.s.cur.p); a.next.geometry.attributes.position.needsUpdate = true; a.next.computeLineDistances(); }
