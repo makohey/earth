@@ -841,6 +841,7 @@ if (ON && Catalog.has("quake-shake") && Catalog.has("quakes")) { try { ShakeRipp
 /* ===== 火山（スミソニアン GVP）：地震の「輪」と見分けるため「▲」。ふだんの火山は灰白で拡大すると出る、週報で活動中の火山は溶岩色でゆっくり呼吸する ===== */
 const VOLC_TYPE = [["strato", "成層火山"], ["shield", "盾状火山"], ["caldera", "カルデラ"], ["lava dome", "溶岩ドーム"], ["volcanic field", "火山群"], ["submarine", "海底火山"],
   ["complex", "複合火山"], ["pyroclastic", "火砕丘"], ["fissure", "割れ目火口"], ["maar", "マール"], ["tuff", "凝灰岩丘"], ["cone", "火山丘"]];
+const ERUPT = { D1: "1964年以降", D2: "1900〜1963年", D3: "1800年代", D4: "1700年代", D5: "1500〜1699年", D6: "西暦1〜1499年", D7: "紀元前", U: "不明（約1万2千年以内）", Q: "不明（約260万年以内）" };
 const volcTypeJa = t => { if (!t) return ""; const l = String(t).toLowerCase(), hit = VOLC_TYPE.find(([k]) => l.includes(k)); return hit ? hit[1] : t; };
 function createVolcanoLayer() {
   const d = Catalog.rows("volcanoes"), meta = Catalog.meta("volcanoes"), rows = d.rows || [], act = d.active || [];
@@ -869,11 +870,11 @@ function createVolcanoLayer() {
     id: "volcanoes", source: { id: "volcanoes", meta }, feats: [],
     profile: {
       describe() {
-        return `<span style="color:rgb(255,110,40)">▲</span> いま活動中 <span class="num">${act.length}</span>か所（週ごとの報告。うち新しい活動 <span class="num">${nw}</span>）　<span style="color:#ddd">▲</span> 約1万2千年の間に活動した火山 <span class="num">${rows.length}</span>か所（拡大すると出ます）<br>地震の「輪」と見分けやすいよう、火山は「▲」で描いています。「プレート」と一緒に出すと、境目に並ぶのが見えます<br>${meta.caution}<br><a href="https://www.data.jma.go.jp/vois/data/tokyo/volcano.html" target="_blank" rel="noopener" style="color:var(--accent)">日本の火山の情報（気象庁）</a>・<a href="https://volcano.si.edu/" target="_blank" rel="noopener" style="color:var(--accent)">世界の火山（スミソニアン）</a><br>出典：${meta.credit}`;
+        return `${act.length ? `<span style="color:rgb(255,110,40)">▲</span> いま活動中 <span class="num">${act.length}</span>か所（週ごとの報告。うち新しい活動 <span class="num">${nw}</span>）　` : ""}<span style="color:#ddd">▲</span> 世界の火山 <span class="num">${rows.length}</span>か所（拡大すると出ます）<br>いま噴火している火山は、この地球儀では出していません。<a href="https://volcano.si.edu/reports_weekly.cfm" target="_blank" rel="noopener" style="color:var(--accent)">いま活動中の火山を見たい人はこちら（スミソニアンの週報）</a><br>地震の「輪」と見分けやすいよう、火山は「▲」で描いています。「プレート」と一緒に出すと、境目に並ぶのが見えます<br>${meta.caution}<br><a href="https://www.data.jma.go.jp/vois/data/tokyo/volcano.html" target="_blank" rel="noopener" style="color:var(--accent)">日本の火山の情報（気象庁）</a>・<a href="https://volcano.si.edu/" target="_blank" rel="noopener" style="color:var(--accent)">世界の火山（スミソニアン）</a><br>出典：${meta.credit}`;
       },
       present(v) {
         if (v.status) return `火山 <span class="num">${v.name}</span>　<span style="color:rgb(255,140,70)">いま活動中</span>（週ごとの報告・${v.status === "new" ? "新しい活動" : "続いている活動"}）<span style="color:var(--ink-faint)">（警報ではありません）</span>`;
-        return `火山 <span class="num">${v.name}</span>　${volcTypeJa(v.type)}${v.elev != null ? `　標高 <span class="num">${Math.round(v.elev).toLocaleString()} m</span>` : ""}${v.country ? `　${v.country}` : ""}${v.last ? `　最後の噴火 <span class="num">${v.last}</span>` : ""}`;
+        return `火山 <span class="num">${v.name}</span>　${volcTypeJa(v.type)}${v.elev != null ? `　標高 <span class="num">${Math.round(v.elev).toLocaleString()} m</span>` : ""}${v.country ? `　${v.country}` : ""}${ERUPT[v.last] ? `　最後の噴火 <span class="num">${ERUPT[v.last]}</span>` : ""}`;
       },
     },
     set visible(v) { on = v; quiet.visible = v; hot.visible = v; }, get visible() { return on; },
