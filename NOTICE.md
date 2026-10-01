@@ -17,7 +17,7 @@
 | 海氷（試作） | NOAA / NCEP GFS の海氷の割合（ICEC） | 米国政府の著作物。モデル計算（+3時間） |
 | 最近の地震（試作） | USGS Earthquake Hazards Program の GeoJSON Summary Feed（M2.5以上・過去7日） | 米国政府の公開データ。出典を表示。マグニチュードは USGS の値で震度ではない |
 | 揺れが広がった範囲（波紋） | USGS ShakeMap の揺れの境目の線（cont_mmi、M5.0以上） | 米国政府の公開データ。出典を表示。強さの数字は出さず形だけ。動きは演出 |
-| 火山 | Global Volcanism Program, Smithsonian Institution（完新世の火山一覧・週ごとの火山活動報告 CAP） | 非商用利用・出典とリンクの表示（GVP の利用条件）。警報や警戒レベルではない |
+| 火山 | NOAA NCEI Global Volcano Locations Database（元データ：Global Volcanism Program, Smithsonian Institution） | CC0。出典を表示。場所の一覧で、いまの噴火や警戒レベルではない |
 | 夜空：星・星座線・星座名（試作） | d3-celestial のデータ（BSD-3-Clause, © 2015 Olaf Frohn、全文 `data/sky/LICENSE-d3-celestial.txt`）。星は XHIP、星座は IAU の星座をもとにしたもの。`scripts/prep_sky.py` で変換 | BSD-3-Clause。天の川は輪郭データを使わず、銀河座標から計算したおおまかな帯 |
 | 海の深さ | Natural Earth 10m の水深帯（0〜10000 m）を `scripts/prep_map.py` で画像化 | パブリックドメイン。動かない地図 |
 | 海面水温の平年差 | NOAA NCEI Optimum Interpolation SST v2.1（日平均の anom） | 米国政府の公開データ。1日1枚、同じ日は取り直さない |
