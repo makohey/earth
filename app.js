@@ -794,7 +794,7 @@ const QUAKE_PROFILE = {
   describe(l) {
     const m = l.source.meta, big = l.feats.filter(f => f.props.mag >= 5).length;
     const bar = this.MAG_STOPS.map(([m, c], k) => `rgb(${c.map(x => Math.round(x * 255)).join(",")}) ${(k / (this.MAG_STOPS.length - 1) * 100).toFixed(0)}%`).join(", ");
-    return `時計の時刻までの24時間・M2.5以上 <span class="num">${l.feats.length}</span>件（M5以上 <span class="num">${big}</span>件）<br>点の大きさと色＝マグニチュード（USGS）・点をタップで詳細
+    return (this.extra || "") + `時計の時刻までの24時間・M2.5以上 <span class="num">${l.feats.length}</span>件（M5以上 <span class="num">${big}</span>件）<br>点の大きさと色＝マグニチュード（USGS）・点をタップで詳細
       <div class="legend" style="margin:6px 0"><div class="bar" style="background:linear-gradient(90deg, ${bar})"></div><div class="ticks">${this.MAG_STOPS.map(([m]) => `<span>M${m}${m === 7 ? "+" : ""}</span>`).join("")}</div></div>${m.caution}<br><a href="https://www.jma.go.jp/bosai/map.html#contents=earthquake_map" target="_blank" rel="noopener" style="color:var(--accent)">気象庁の地震情報</a><br>出典：${m.credit}`;
   },
   present(f) {
@@ -804,6 +804,93 @@ const QUAKE_PROFILE = {
   },
 };
 if (ON && Catalog.has("quakes")) FEATURE_LAYERS.push(createPointLayer(createFeatureSource("quakes"), QUAKE_PROFILE));
+
+/* ===== 揺れが広がった範囲（USGS ShakeMap の境目の線）を、水面の波紋のように =====
+   形は本物（地震計の記録からの推定）、動きは演出。揺れの強さの数字は出さない（マグニチュードで表記、震度は専門の情報へ） */
+function createShakeRipples() {
+  const all = Catalog.rows("quake-shake").events || [], cmin = Clock.now().getTime() / 60000;
+  const evs = all.filter(e => e.tmin <= cmin && e.tmin >= cmin - 24 * 60);
+  const pos = [], ord = [], seed = [], col = [];
+  evs.forEach((e, k) => {
+    const vals = [...new Set(e.lines.map(l => l.v))].sort((a, b) => b - a), n = Math.max(1, vals.length - 1);
+    const c = QUAKE_PROFILE.colorOf({ props: { mag: e.mag } }), sd = (k * 0.6180339) % 1, q = [0, 0, 0];
+    for (const l of e.lines) { const o = vals.indexOf(l.v) / n;
+      for (let i = 2; i < l.c.length; i += 2) for (const j of [i - 2, i]) { toXYZ(l.c[j + 1], l.c[j], 1.0035, q, 0); pos.push(...q); ord.push(o); seed.push(sd); col.push(...c); } }
+  });
+  if (!pos.length) return { count: 0, tick() {} };
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute("aOrd", new THREE.Float32BufferAttribute(ord, 1));
+  g.setAttribute("aSeed", new THREE.Float32BufferAttribute(seed, 1)); g.setAttribute("aCol", new THREE.Float32BufferAttribute(col, 3));
+  const mat = new THREE.ShaderMaterial({ uniforms: { uT: { value: 0 } }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    vertexShader: `attribute float aOrd; attribute float aSeed; attribute vec3 aCol; varying float vOrd; varying float vSeed; varying vec3 vCol;
+      void main(){ vOrd = aOrd; vSeed = aSeed; vCol = aCol; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+    fragmentShader: `uniform float uT; varying float vOrd; varying float vSeed; varying vec3 vCol;
+      void main(){ float ph = fract(uT / 6.0 + vSeed);                         /* 6秒ごとに、震源から外へ広がる */
+        float w = exp(-pow((ph * 1.3 - vOrd) / 0.11, 2.0));
+        float a = 0.07 + w * (1.0 - 0.5 * vOrd);
+        gl_FragColor = vec4(mix(vCol, vec3(1.0), 0.35) * a, a); }` });
+  const lines = new THREE.LineSegments(g, mat); lines.frustumCulled = false; lines.renderOrder = 3.2; scene.add(lines);
+  return { count: evs.length,
+    tick(t, on) { lines.visible = on; if (on) mat.uniforms.uT.value = (t / 1000) % 6000; } };
+}
+let ShakeRipples = null;
+if (ON && Catalog.has("quake-shake") && Catalog.has("quakes")) { try { ShakeRipples = createShakeRipples();
+  if (ShakeRipples.count) QUAKE_PROFILE.extra = `<b>波紋</b>＝M5以上の地震で、揺れが届いた範囲（<span class="num">${ShakeRipples.count}</span>件）。形は地震計の記録からの推定（USGS ShakeMap）、広がる動きは演出です<br>`;
+} catch (e) { console.warn("揺れの波紋を出せませんでした", e); } }
+
+/* ===== 火山（スミソニアン GVP）：地震の「輪」と見分けるため「▲」。ふだんの火山は灰白で拡大すると出る、週報で活動中の火山は溶岩色でゆっくり呼吸する ===== */
+const VOLC_TYPE = [["strato", "成層火山"], ["shield", "盾状火山"], ["caldera", "カルデラ"], ["lava dome", "溶岩ドーム"], ["volcanic field", "火山群"], ["submarine", "海底火山"],
+  ["complex", "複合火山"], ["pyroclastic", "火砕丘"], ["fissure", "割れ目火口"], ["maar", "マール"], ["tuff", "凝灰岩丘"], ["cone", "火山丘"]];
+const volcTypeJa = t => { if (!t) return ""; const l = String(t).toLowerCase(), hit = VOLC_TYPE.find(([k]) => l.includes(k)); return hit ? hit[1] : t; };
+function createVolcanoLayer() {
+  const d = Catalog.rows("volcanoes"), meta = Catalog.meta("volcanoes"), rows = d.rows || [], act = d.active || [];
+  const mk = (list, r, size, colorFn, active) => {
+    const n = list.length, pos = new Float32Array(n * 3), col = new Float32Array(n * 3);
+    list.forEach((v, i) => { toXYZ(v.lat, v.lon, r, pos, i * 3); col.set(colorFn(v), i * 3); });
+    const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.BufferAttribute(pos, 3)); g.setAttribute("aCol", new THREE.BufferAttribute(col, 3));
+    const mat = new THREE.ShaderMaterial({ uniforms: { uSize: { value: size * renderer.getPixelRatio() }, uShow: { value: 1 }, uT: { value: 0 } }, transparent: true, depthWrite: false,
+      vertexShader: `attribute vec3 aCol; uniform float uSize; varying vec3 vCol; void main(){ vCol = aCol; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); gl_PointSize = uSize; }`,
+      fragmentShader: `uniform float uShow; uniform float uT; varying vec3 vCol;
+        void main(){ vec2 p = gl_PointCoord; float y = p.y, hw = (y - 0.16) / 0.70 * 0.40;                    /* 上が尖った三角（▲） */
+          float inside = step(0.16, y) * step(y, 0.86) * step(abs(p.x - 0.5), hw);
+          float edge = inside * (1.0 - step(abs(p.x - 0.5), hw - 0.09) * step(y, 0.78));
+          ${active ? `float breathe = 0.5 + 0.5 * sin(uT * 1.6); float halo = smoothstep(0.5, 0.0, length(p - vec2(0.5, 0.55))) * (0.25 + 0.35 * breathe);
+          float a = max(inside * (0.85 + 0.15 * breathe), halo) * uShow; if (a < 0.02) discard;
+          gl_FragColor = vec4(mix(vCol, vec3(1.0, 0.9, 0.6), edge * 0.6 + 0.25 * breathe * inside), a);` :
+          `float a = (inside * 0.45 + edge * 0.5) * uShow; if (a < 0.02) discard; gl_FragColor = vec4(vCol, a);`} }` });
+    const pts = new THREE.Points(g, mat); pts.renderOrder = 3.1; pts.frustumCulled = false; scene.add(pts); return pts;
+  };
+  const listAll = rows.map(r => ({ name: r[0], lat: r[1], lon: r[2], type: r[3], elev: r[4], country: r[5], num: r[6], last: r[7] }));
+  const quiet = mk(listAll, 1.006, 9, () => [0.86, 0.86, 0.82], false);
+  const hot = mk(act, 1.008, 16, () => [1.0, 0.42, 0.12], true);
+  let on = false; quiet.visible = hot.visible = false;                  /* 最初は出さない（歯車の「火山」で出す） */
+  const nw = act.filter(a => a.status === "new").length;
+  return {
+    id: "volcanoes", source: { id: "volcanoes", meta }, feats: [],
+    profile: {
+      describe() {
+        return `<span style="color:rgb(255,110,40)">▲</span> いま活動中 <span class="num">${act.length}</span>か所（週ごとの報告。うち新しい活動 <span class="num">${nw}</span>）　<span style="color:#ddd">▲</span> 約1万2千年の間に活動した火山 <span class="num">${rows.length}</span>か所（拡大すると出ます）<br>地震の「輪」と見分けやすいよう、火山は「▲」で描いています。「プレート」と一緒に出すと、境目に並ぶのが見えます<br>${meta.caution}<br><a href="https://www.data.jma.go.jp/vois/data/tokyo/volcano.html" target="_blank" rel="noopener" style="color:var(--accent)">日本の火山の情報（気象庁）</a>・<a href="https://volcano.si.edu/" target="_blank" rel="noopener" style="color:var(--accent)">世界の火山（スミソニアン）</a><br>出典：${meta.credit}`;
+      },
+      present(v) {
+        if (v.status) return `火山 <span class="num">${v.name}</span>　<span style="color:rgb(255,140,70)">いま活動中</span>（週ごとの報告・${v.status === "new" ? "新しい活動" : "続いている活動"}）<span style="color:var(--ink-faint)">（警報ではありません）</span>`;
+        return `火山 <span class="num">${v.name}</span>　${volcTypeJa(v.type)}${v.elev != null ? `　標高 <span class="num">${Math.round(v.elev).toLocaleString()} m</span>` : ""}${v.country ? `　${v.country}` : ""}${v.last ? `　最後の噴火 <span class="num">${v.last}</span>` : ""}`;
+      },
+    },
+    set visible(v) { on = v; quiet.visible = v; hot.visible = v; }, get visible() { return on; },
+    get shown() { return on; },
+    nearest(lon, lat, maxDeg) {
+      const near = list => { let best = null, bd = maxDeg; for (const v of list) { const dd = Math.hypot((((v.lon - lon + 540) % 360) - 180) * Math.cos(lat * D2R), v.lat - lat); if (dd < bd) { bd = dd; best = v; } } return best; };
+      return near(act) || (quiet.material.uniforms.uShow.value > 0.3 ? near(listAll) : null);
+    },
+    tick(dist) {
+      if (!on) return;
+      quiet.material.uniforms.uShow.value = Math.min(1, Math.max(0, (4.6 - dist) / 1.2));   /* 引いた地球では、ふだんの火山は隠す */
+      hot.material.uniforms.uT.value = (performance.now() / 1000) % 3600;
+    },
+  };
+}
+let VolcanoLayer = null;
+if (ON && Catalog.has("volcanoes")) { try { VolcanoLayer = createVolcanoLayer(); FEATURE_LAYERS.push(VolcanoLayer); } catch (e) { console.warn("火山を出せませんでした", e); } }
 
 /* ===== 人工衛星（ISS・天宮・ハッブル・ひまわり・GPS・ガリレオ・みちびき）：時計の約束の例外。「いま」の位置で動く =====
    位置は Actions が軌道要素（CelesTrak）から SGP4 で計算済み。ブラウザは時刻で補間するだけ（見る人から外へは取りに行かない）
@@ -1133,6 +1220,7 @@ if (MapLayer) {
     { key: "sst-anom", label: "海水温（平年差）", get: () => layerById("sst-anom")?.visible, set: v => setLayer("sst-anom", v) },
     { key: "sea-ice", label: "海氷", get: () => layerById("sea-ice")?.visible, set: v => setLayer("sea-ice", v) },
     { key: "quakes", label: "地震", get: () => layerById("quakes")?.visible, set: v => setLayer("quakes", v) },
+    { key: "volcanoes", label: "火山", get: () => layerById("volcanoes")?.visible, set: v => setLayer("volcanoes", v) },
     { key: "sats", label: "人工衛星", get: () => layerById("sats")?.visible, set: v => setLayer("sats", v) },
     { key: "aurora", label: "オーロラ帯", get: () => AuroraLayer?.visible, set: v => { if (AuroraLayer) { AuroraLayer.visible = v; AuroraLayer.userOn = v; } } },
     { key: "plates", label: "プレート", get: () => PlateLayer?.visible, set: v => { if (PlateLayer) { PlateLayer.visible = v; PlateLayer.userOn = v; const cb = document.getElementById("t-plates"); if (cb) cb.checked = v; } } },
@@ -1236,7 +1324,7 @@ function loop(now) {
   const dt = Math.min(now - last, 100); last = now;
   frames.push(dt); if (frames.length > 120) frames.shift();
   if (VisualParticles.visible) VisualParticles.step(Math.min(dt / 16.667, 3));
-  MapLayer?.tick(); SkyLayer?.tick(); GuideLayer?.tick(); AuroraLayer?.tick(now);
+  MapLayer?.tick(); SkyLayer?.tick(); GuideLayer?.tick(); AuroraLayer?.tick(now); ShakeRipples?.tick(now, !!FEATURE_LAYERS.find(l => l.id === "quakes")?.visible);
   Spin.tick(); controls.update();
   for (const l of FEATURE_LAYERS) l.tick(camera.position.length());
   renderer.render(scene, camera);

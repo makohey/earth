@@ -101,12 +101,41 @@ jobs:
         continue-on-error: true
         run: python scripts/fetch_sats.py --latest _site/data/latest
 
-      # 新しく取った一式を置き場に残す（次にコードを送ったとき、これを使う）。一式が作れなかったときは残さない
+      # 火山と揺れの波紋：自分の置き場を持ち、取ったものは取り直さない（同じ月の一覧・同じ日の週報・同じ地震の ShakeMap）。
+      # だから push でも走らせてよい（置き場にない新しい分だけを取りに行く）
+      - uses: actions/cache/restore@v6
+        with:
+          path: volc_cache
+          key: volc-${{ github.run_id }}
+          restore-keys: volc-
+      - name: 火山（スミソニアン GVP：一覧は月1回、週報は1日1回まで）
+        continue-on-error: true
+        run: python scripts/fetch_volcanoes.py --latest _site/data/latest --cache volc_cache
+      - uses: actions/cache/restore@v6
+        with:
+          path: shake_cache
+          key: shake-${{ github.run_id }}
+          restore-keys: shake-
+      - name: 揺れが広がった範囲（USGS ShakeMap、M5以上・新しい地震だけ）
+        continue-on-error: true
+        run: python scripts/fetch_shakemaps.py --latest _site/data/latest --cache shake_cache
+      - uses: actions/cache/save@v6
+        if: hashFiles('volc_cache/*') != ''
+        with:
+          path: volc_cache
+          key: volc-${{ github.run_id }}
+      - uses: actions/cache/save@v6
+        if: hashFiles('shake_cache/*') != ''
+        with:
+          path: shake_cache
+          key: shake-${{ github.run_id }}
+
+      # 一式を置き場に残す（次にコードを送ったとき、これを使う）。push で火山などを足した分も含めて残す。一式が作れなかったときは残さない
       - name: 取った一式を置き場へ
-        if: steps.reuse.outputs.hit != 'true' && hashFiles('_site/data/latest/manifest.json') != ''
+        if: hashFiles('_site/data/latest/manifest.json') != ''
         run: rm -rf saved_latest && cp -r _site/data/latest saved_latest
       - uses: actions/cache/save@v6
-        if: steps.reuse.outputs.hit != 'true' && hashFiles('_site/data/latest/manifest.json') != ''
+        if: hashFiles('_site/data/latest/manifest.json') != ''
         with:
           path: saved_latest
           key: latest-${{ github.run_id }}
