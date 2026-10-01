@@ -11,6 +11,7 @@
 | 国境線・国名（試作） | Natural Earth 1:50m（nvkelso/natural-earth-vector）。見方別データ（日本の見方／既定の見方）を `scripts/prep_map.py` で変換 | パブリックドメイン |
 | 日付変更線 | Natural Earth 1:50m geographic lines（nvkelso/natural-earth-vector）を `scripts/prep_lines.py` で変換。赤道は計算で描画 | パブリックドメイン |
 | オーロラ帯（目安） | 地磁気の双極子の近似（磁気の極の位置は IGRF による）から計算。揺らぎは演出 | 外部データなし |
+| プレートの境目 | Bird (2003) PB2002（An updated digital model of plate boundaries）。fraxen/tectonicplates（Hugo Ahlenius / Nordpil による変換）の PB2002_steps を `scripts/prep_plates.py` で変換 | ODC-By 1.0（出典を表示）。動かない地図 |
 | 衛星赤外（雲）（試作） | NOAA/NESDIS GMGSI（GOES・Himawari・Meteosat などの静止気象衛星の合成）、NOAA Open Data Dissemination（AWS） | 公開利用可。出典を表示し、NOAA・JMA 等との提携や推奨を示唆しない。0.25° 格子に整形した加工品で、元データそのものではない |
 | 氷河・氷床・棚氷（試作） | Natural Earth 1:50m（氷河・氷床、南極の棚氷）を `scripts/prep_map.py` で画像化 | パブリックドメイン。動かない地図 |
 | 海氷（試作） | NOAA / NCEP GFS の海氷の割合（ICEC） | 米国政府の著作物。モデル計算（+3時間） |

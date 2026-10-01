@@ -711,6 +711,71 @@ function createAuroraLayer() {
     tick(now) { if (mesh.visible) mat.uniforms.uT.value = now / 1000; },
   };
 }
+/* ===== プレートの境目（Bird 2003 PB2002、ODC-By 1.0） =====
+   色は紫の系統（ほかの層で使っていない色）。線の形で種類を分ける：実線＝近づく（沈み込む・ぶつかる）／破線＝広がる／点線＝ずれる */
+const PLATE_JA = { PA: "太平洋", NA: "北アメリカ", EU: "ユーラシア", AF: "アフリカ", AN: "南極", IN: "インド", AU: "オーストラリア", SA: "南アメリカ", NZ: "ナスカ", CO: "ココス",
+  PS: "フィリピン海", AR: "アラビア", OK: "オホーツク", AM: "アムール", CA: "カリブ", JF: "ファンデフカ", SO: "ソマリア", SU: "スンダ", YA: "揚子", SC: "スコシア", RI: "リベラ", MA: "マリアナ", ON: "沖縄", TO: "トンガ", KE: "ケルマデック", NH: "ニューヘブリディーズ", BS: "バンダ海", AS: "エーゲ海", AT: "アナトリア", PM: "パナマ", NB: "北ビスマルク", SB: "南ビスマルク", SS: "ソロモン海", TI: "ティモール", BH: "バーズヘッド", CL: "キャロライン", BU: "ビルマ", MS: "モルッカ海", ND: "北アンデス", AP: "アルティプラノ", EA: "イースター", JZ: "ファンフェルナンデス", GP: "ガラパゴス", MN: "マヌス", WL: "ウッドラーク", FT: "フツナ", NI: "ニウアフォウ", BR: "バルモラル礁", CR: "コンウェイ礁", MO: "モーンズ礁", SW: "サンドウィッチ", SL: "シェトランド" };
+const PLATE_LABELS = [["太平洋プレート", 2, -150], ["北アメリカプレート", 48, -100], ["ユーラシアプレート", 55, 70], ["アフリカプレート", 5, 18], ["南極プレート", -75, 40],
+  ["インドプレート", 12, 78], ["オーストラリアプレート", -25, 132], ["南アメリカプレート", -15, -48], ["ナスカプレート", -20, -92], ["フィリピン海プレート", 18, 134],
+  ["アラビアプレート", 23, 47], ["オホーツクプレート", 55, 150], ["アムールプレート", 45, 125], ["ココスプレート", 9, -96], ["カリブプレート", 15, -75], ["スンダプレート", 5, 108]];
+const PLATE_KIND = [{ ja: "広がる", verb: "離れる", line: "dashed", color: 0xd2b4ff }, { ja: "ずれる", verb: "ずれる", line: "dotted", color: 0xa98ae0 }, { ja: "ぶつかる", verb: "近づく", line: "solid", color: 0xc07cff }, { ja: "沈み込む", verb: "近づく", line: "solid", color: 0xc07cff }];
+async function createPlateLayer() {
+  const d = await getJSON("data/map/plates.json"), R = 1.0026;
+  const group = new THREE.Group(); group.renderOrder = 1.95; group.visible = false; scene.add(group);
+  for (const [k, look] of [[[2, 3], { dash: 0, gap: 0, op: 0.95 }], [[0], { dash: 0.010, gap: 0.006, op: 0.9 }], [[1], { dash: 0.003, gap: 0.004, op: 0.75 }]]) {
+    const sel = d.steps.filter(r => k.includes(r[4])), p = new Float32Array(sel.length * 6);
+    sel.forEach((r, j) => { toXYZ(r[1], r[0], R, p, j * 6); toXYZ(r[3], r[2], R, p, j * 6 + 3); });
+    const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.BufferAttribute(p, 3));
+    const color = PLATE_KIND[k[0]].color;
+    const mat = look.dash ? new THREE.LineDashedMaterial({ color, transparent: true, opacity: look.op, depthWrite: false, dashSize: look.dash, gapSize: look.gap }) : new THREE.LineBasicMaterial({ color, transparent: true, opacity: look.op, depthWrite: false });
+    const ls = new THREE.LineSegments(g, mat); if (look.dash) ls.computeLineDistances(); group.add(ls);
+  }
+  /* 線は1pxなので、下にぼかした太い光の帯を敷いて見やすくする（キャンバスに描いて球に貼る） */
+  { const W = 2048, H = 1024, cv = document.createElement("canvas"); cv.width = W; cv.height = H; const ctx = cv.getContext("2d");
+    const X = lo => (lo + 180) / 360 * W, Y = la => (90 - la) / 180 * H;
+    ctx.lineCap = "round"; ctx.shadowColor = "rgba(190,120,255,0.9)"; ctx.shadowBlur = 6;
+    for (const [k, w, a] of [[[2, 3], 4, 0.55], [[0], 3, 0.35], [[1], 2.4, 0.28]]) {
+      ctx.strokeStyle = `rgba(192,124,255,${a})`; ctx.lineWidth = w; ctx.beginPath();
+      for (const r of d.steps) { if (!k.includes(r[4]) || Math.abs(r[2] - r[0]) > 180) continue; ctx.moveTo(X(r[0]), Y(r[1])); ctx.lineTo(X(r[2]), Y(r[3])); }
+      ctx.stroke(); }
+    const tex = new THREE.CanvasTexture(cv); tex.anisotropy = 4;
+    const glowMesh = new THREE.Mesh(new THREE.SphereGeometry(1.0022, 192, 96), new THREE.ShaderMaterial({ uniforms: { uTex: { value: tex } }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      vertexShader: `varying vec3 vPos; void main(){ vPos = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+      fragmentShader: `uniform sampler2D uTex; varying vec3 vPos; const float PI = 3.141592653589793;
+        void main(){ vec3 n = normalize(vPos); float lat = asin(clamp(n.y,-1.0,1.0)), lon = atan(-n.z, n.x);
+          vec4 c = texture2D(uTex, vec2((lon+PI)/(2.0*PI), (lat+PI*0.5)/PI)); gl_FragColor = vec4(c.rgb * c.a, c.a); }` }));
+    group.add(glowMesh); }
+  const labels = PLATE_LABELS.map(([t, la, lo]) => { const sp = makeTextSprite(t, "rgba(214,184,255,0.92)", 600, 11), q = [0, 0, 0]; toXYZ(la, lo, 1.008, q, 0); sp.position.set(...q); group.add(sp); return sp; });
+  const mids = d.steps.map(r => [(r[0] + (((r[2] - r[0] + 540) % 360) - 180) / 2), (r[1] + r[3]) / 2]);
+  const cam = new THREE.Vector3(), wp = new THREE.Vector3();
+  const name = c => PLATE_JA[c] ? PLATE_JA[c] + "プレート" : c;
+  return {
+    id: "plates", source: { id: "plates", meta: { title: "プレートの境目", kind: "研究モデル（地図）" } }, feats: [],
+    userOn: false,
+    profile: {
+      describe() {
+        const sw = (k, style) => `<span style="display:inline-block;width:22px;border-top:2px ${style} #${PLATE_KIND[k].color.toString(16)};vertical-align:middle;margin-right:4px"></span>`;
+        return `地球の表面は、十数枚の大きな岩の板（プレート）に分かれていて、1年に数cmずつ動いています。境目では地震が起き、火山ができます<br>${sw(3, "solid")}近づく（沈み込む・ぶつかる）　${sw(0, "dashed")}広がる（海嶺など）　${sw(1, "dotted")}ずれる<br>線をタップで、どのプレートの境目か・1年に何cm動くか。「地震」と一緒に出すと、点が線の上に並ぶのが見えます<br>日本のまわりは、このモデルではオホーツク・アムールプレートに分かれています（日本の教科書では北アメリカ・ユーラシアプレートとして扱うことが多い）<br>出典：Bird (2003) "An updated digital model of plate boundaries"（PB2002）、変換 Hugo Ahlenius / Nordpil（ODC-By 1.0）`;
+      },
+      present(r) { const k = PLATE_KIND[r[4]], [a, b] = r[6].split(/[-\/\\]/);
+        return `プレートの境目：${name(a)} と ${name(b)}（<span class="num">${k.ja}</span>）　1年に約<span class="num">${(r[5] / 10).toFixed(1)} cm</span> ${k.verb} <span style="color:var(--ink-faint)">（研究モデルの値）</span>`; },
+    },
+    set visible(v) { group.visible = v; }, get visible() { return group.visible; },
+    get shown() { return group.visible; },
+    nearest(lon, lat, maxDeg) { let best = null, bd = Math.max(maxDeg, 1.2);
+      mids.forEach(([mlo, mla], i) => { const dd = Math.hypot((((mlo - lon + 540) % 360) - 180) * Math.cos(lat * D2R), mla - lat); if (dd < bd) { bd = dd; best = d.steps[i]; } });
+      return best; },
+    tick() {
+      if (!group.visible) return;
+      const h = stage.clientHeight || 800, far = camera.position.length() > 8;
+      cam.copy(camera.position).normalize();
+      for (const sp of labels) { wp.copy(sp.position).normalize(); const ok = !far && wp.dot(cam) > 0.35; sp.visible = ok;
+        if (ok) { const sc = sp.userData.px / h * 2 * Math.tan(camera.fov / 2 * D2R); sp.scale.set(sc * sp.userData.aspect, sc, 1); } }
+    },
+  };
+}
+let PlateLayer = null;
+if (ON) { try { PlateLayer = await createPlateLayer(); FEATURE_LAYERS.push(PlateLayer); } catch (e) { console.warn("プレートの境目を読めませんでした", e); } }
 let AuroraLayer = null;
 if (ON) { try { AuroraLayer = createAuroraLayer(); } catch (e) { console.warn("オーロラ帯を出せませんでした", e); } }
 if (DEV && Catalog.has("metar")) FEATURE_LAYERS.push(createPointLayer(createFeatureSource("metar"), OBS_PROFILE));
@@ -1070,10 +1135,11 @@ if (MapLayer) {
     { key: "quakes", label: "地震", get: () => layerById("quakes")?.visible, set: v => setLayer("quakes", v) },
     { key: "sats", label: "人工衛星", get: () => layerById("sats")?.visible, set: v => setLayer("sats", v) },
     { key: "aurora", label: "オーロラ帯", get: () => AuroraLayer?.visible, set: v => { if (AuroraLayer) { AuroraLayer.visible = v; AuroraLayer.userOn = v; } } },
+    { key: "plates", label: "プレート", get: () => PlateLayer?.visible, set: v => { if (PlateLayer) { PlateLayer.visible = v; PlateLayer.userOn = v; const cb = document.getElementById("t-plates"); if (cb) cb.checked = v; } } },
     { key: "guide", label: "赤道・日付変更線", get: () => GuideLayer?.visible, set: v => { if (GuideLayer) { GuideLayer.visible = v; GuideLayer.userOn = v; } } },
     { key: "map", label: "国境・地名", get: () => MapLayer.visible, set: v => { MapLayer.visible = v; box.querySelector(".viewbox").hidden = !v; } },
     { key: "sky", label: "✦ 夜空", get: () => SkyLayer?.visible, set: v => { if (SkyLayer) SkyLayer.visible = v; } },
-  ].filter(c => c.key === "wind" || c.key === "map" || (c.key === "sky" ? !!SkyLayer : c.key === "guide" ? !!GuideLayer : c.key === "aurora" ? !!AuroraLayer : !!layerById(c.key)));
+  ].filter(c => c.key === "wind" || c.key === "map" || (c.key === "sky" ? !!SkyLayer : c.key === "guide" ? !!GuideLayer : c.key === "aurora" ? !!AuroraLayer : c.key === "plates" ? !!PlateLayer : !!layerById(c.key)));
   box.querySelector(".chips").innerHTML = CHIPS.map(c => `<button type="button" data-chip="${c.key}">${c.label}</button>`).join("");
   var syncChips = () => box.querySelectorAll("[data-chip]").forEach(b => b.setAttribute("aria-pressed", String(!!CHIPS.find(c => c.key === b.dataset.chip).get())));
   const setMode = k => {
