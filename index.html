@@ -51,6 +51,7 @@
   .presets button:active{background:rgba(143,227,212,.18)}
   .chips{display:flex;flex-wrap:wrap;gap:6px}
   .chips button{min-height:32px;padding:4px 11px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--ink-faint);font:inherit;font-size:12.5px;cursor:pointer}
+  .chips button:disabled,.presets button:disabled{opacity:.3;cursor:not-allowed}
   .chips button[aria-pressed="true"]{color:var(--ink);border-color:color-mix(in srgb,var(--accent) 55%,transparent);background:rgba(143,227,212,.10)}
   .meter{position:fixed;left:16px;top:calc(62px + env(safe-area-inset-top,0px));font-family:var(--mono);font-size:11px;line-height:1.55;color:var(--ink-soft);background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:8px 10px;font-variant-numeric:tabular-nums;min-width:150px}
   .meter div{display:flex;justify-content:space-between;gap:14px}

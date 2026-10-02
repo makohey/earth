@@ -628,6 +628,44 @@ try { SkyLayer = await createSkyLayer(); } catch (e) { console.warn("夜空を�
 let MapLayer = null;
 if (ON) { try { MapLayer = await createMapLayer(); MapLayer.view = "jp"; MapLayer.visible = false; } catch (e) { console.warn("地図を読めませんでした", e); } }
 
+/* ===== 首都（Natural Earth、パブリックドメイン）：★と名前。国境と同じ「見方」に合わせる。見方が分かれる首都は白抜きの☆ ===== */
+async function createCapitalLayer() {
+  const d = await getJSON("data/map/capitals.json"), F = Object.fromEntries(d.fields.map((n, i) => [n, i]));
+  const rows = d.rows.map(r => ({ ja: r[F.ja], lat: r[F.lat], lon: r[F.lon], country: r[F.country], fact: !!r[F.fact], jp: !!r[F.jp], disputed: !!r[F.disputed], rank: r[F.rank] }));
+  const group = new THREE.Group(); group.visible = false; group.renderOrder = 4; scene.add(group);
+  const pos = new Float32Array(rows.length * 3), hol = new Float32Array(rows.length), show = new Float32Array(rows.length);
+  rows.forEach((c, i) => { toXYZ(c.lat, c.lon, 1.004, pos, i * 3); hol[i] = c.disputed ? 1 : 0; });
+  const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.BufferAttribute(pos, 3)); g.setAttribute("aHol", new THREE.BufferAttribute(hol, 1)); g.setAttribute("aShow", new THREE.BufferAttribute(show, 1));
+  const stars = new THREE.Points(g, new THREE.ShaderMaterial({ uniforms: { uSize: { value: 11 * renderer.getPixelRatio() } }, transparent: true, depthWrite: false,
+    vertexShader: `attribute float aHol; attribute float aShow; uniform float uSize; varying float vHol; void main(){ vHol = aHol; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); gl_PointSize = uSize * aShow; }`,
+    fragmentShader: `varying float vHol; void main(){ vec2 p = gl_PointCoord - 0.5; p.y = -p.y; float a = atan(p.x, p.y), r = length(p);
+      float lim = mix(0.20, 0.47, pow(0.5 + 0.5 * cos(5.0 * a), 2.0));                                   /* 五つの角の星 */
+      float fill = 1.0 - smoothstep(lim - 0.05, lim, r), inner = 1.0 - smoothstep(lim - 0.16, lim - 0.11, r);
+      float a1 = vHol > 0.5 ? fill * (1.0 - inner) : fill; if (a1 < 0.05) discard;
+      gl_FragColor = vec4(vHol > 0.5 ? vec3(0.85, 0.85, 0.80) : vec3(1.0, 0.86, 0.45), a1); }` }));
+  stars.frustumCulled = false; group.add(stars);
+  const labels = rows.map(c => { const sp = makeTextSprite(c.ja, "rgba(255,236,196,0.95)", 500, 11); const q = [0, 0, 0]; toXYZ(c.lat, c.lon, 1.009, q, 0); sp.position.set(...q); sp.visible = false; group.add(sp); return sp; });
+  const cam = new THREE.Vector3(), wp = new THREE.Vector3();
+  let on = false;
+  return {
+    info: { title: "首都", kind: "地図（点）", credit: "Natural Earth 1:50m populated places（パブリックドメイン）",
+      note: "★＝首都。国境と同じ「見方」（日本から見た見方／実際の管理）に合わせています。☆（白抜き）＝首都とするかどうか、国によって見方が分かれるところ。名前は拡大すると出ます" },
+    set visible(v) { on = v; group.visible = v; }, get visible() { return on; },
+    tick() {
+      if (!on) return;
+      const view = MapLayer?.view || "jp", dist = camera.position.length(), h = stage.clientHeight || 800, k = 2 * Math.tan(camera.fov / 2 * D2R) / h;
+      const maxRank = dist < 2.6 ? 99 : dist < 3.6 ? 4 : dist < 5.2 ? 2 : -1;
+      cam.copy(camera.position).normalize();
+      rows.forEach((c, i) => { const vis = view === "fact" ? c.fact : c.jp; show[i] = vis ? 1 : 0;
+        const sp = labels[i]; wp.copy(sp.position).normalize(); const ok = vis && c.rank <= maxRank && wp.dot(cam) > 0.3; sp.visible = ok;
+        if (ok) { const sc = sp.userData.px * k; sp.scale.set(sc * sp.userData.aspect, sc, 1); sp.center.set(0.5, -0.35); } });
+      g.attributes.aShow.needsUpdate = true;
+    },
+  };
+}
+let CapitalLayer = null;
+if (ON && MapLayer) { try { CapitalLayer = await createCapitalLayer(); } catch (e) { console.warn("首都を読めませんでした", e); } }
+
 /* ===== 赤道と日付変更線（Natural Earth、パブリックドメイン） =====
    日付変更線は 180° の直線ではなく、島国の都合で曲がっている。線の両側に「いまの日付」を出す（西側が1日先） */
 async function createGuideLayer() {
@@ -1191,6 +1229,8 @@ document.getElementById("d-layers").innerHTML = SCALAR_LAYERS.map(l => layerBloc
       <div class="sub">${NIGHT_LIGHTS.note}<br>出典：${NIGHT_LIGHTS.credit}</div></div>` : "")
   + (ON ? `<div class="layer"><label>${LAND_ICE.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${LAND_ICE.kind}</span></label>
       <div class="sub">${LAND_ICE.note}<br>出典：${LAND_ICE.credit}</div></div>` : "")
+  + (CapitalLayer ? `<div class="layer"><label>${CapitalLayer.info.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${CapitalLayer.info.kind}</span></label>
+      <div class="sub">${CapitalLayer.info.note}<br>出典：${CapitalLayer.info.credit}</div></div>` : "")
   + (GuideLayer ? `<div class="layer"><label>${GuideLayer.info.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${GuideLayer.info.kind}</span></label>
       <div class="sub">${GuideLayer.info.note}<br>出典：${GuideLayer.info.credit}</div></div>` : "")
   + (AuroraLayer ? `<div class="layer"><label>${AuroraLayer.info.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${AuroraLayer.info.kind}</span></label>
@@ -1205,11 +1245,13 @@ if (MapLayer) {
     flow:  { label: "流れる地球",     wind: true,  scalar: true,  map: false, night: 1 },
     globe: { label: "ふつうの地球儀", wind: false, scalar: false, map: true,  night: 0 },
     both:  { label: "重ねる",         wind: true,  scalar: true,  map: true,  night: 1 },
+    names: { label: "地名",           wind: false, scalar: false, map: true,  night: 0, names: true },
   };
   const box = document.createElement("div"); box.className = "modes";
   box.innerHTML = `<div class="seg" role="group" aria-label="見せ方">${Object.entries(MODES).map(([k, m]) => `<button type="button" data-mode="${k}">${m.label}</button>`).join("")}</div>
     <div class="presets" role="group" aria-label="見方のプリセット"><span class="cap">見方のセット</span></div>
     <div class="chips" role="group" aria-label="層を出す・消す"></div>
+    <p class="note names-note" hidden>地名の地球儀：文字が見やすいよう、出せる層をしぼっています（国境・地名、首都、赤道・日付変更線、プレート、地震、火山）。ほかのモードに戻ると、前の状態に戻ります</p>
     ${WIND_LEVELS.slice(1).some(L => Catalog.has(L.id)) ? `<div class="windh"><div class="seg small" role="group" aria-label="風の高さ">${WIND_LEVELS.filter(L => Catalog.has(L.id)).map(L => `<button type="button" data-wlev="${WIND_LEVELS.indexOf(L)}" aria-pressed="${L.id === "wind-10m"}">${L.label}</button>`).join("")}</div>
       <p class="note">風の高さ：上に行くほど地球規模の流れ（偏西風・ジェット気流）が見えます。上空の線は速さに合わせて色の幅を変えています</p></div>` : ""}
     <div class="viewbox"><div class="seg small" role="group" aria-label="国境の見方">${Object.entries(MapLayer.views).map(([k, t]) => `<button type="button" data-view="${k}">${t}</button>`).join("")}</div>
@@ -1232,9 +1274,10 @@ if (MapLayer) {
     { key: "milky", label: "天の川", get: () => SkyLayer?.milky, set: v => { if (SkyLayer) SkyLayer.milky = v; } },
     { key: "plates", label: "プレート", get: () => PlateLayer?.visible, set: v => { if (PlateLayer) { PlateLayer.visible = v; PlateLayer.userOn = v; const cb = document.getElementById("t-plates"); if (cb) cb.checked = v; } } },
     { key: "guide", label: "赤道・日付変更線", get: () => GuideLayer?.visible, set: v => { if (GuideLayer) { GuideLayer.visible = v; GuideLayer.userOn = v; } } },
+    { key: "capitals", label: "★ 首都", get: () => CapitalLayer?.visible, set: v => { if (CapitalLayer) CapitalLayer.visible = v; } },
     { key: "map", label: "国境・地名", get: () => MapLayer.visible, set: v => { MapLayer.visible = v; box.querySelector(".viewbox").hidden = !v; } },
     { key: "sky", label: "✦ 星座", get: () => SkyLayer?.visible, set: v => { if (SkyLayer) SkyLayer.visible = v; } },
-  ].filter(c => c.key === "wind" || c.key === "map" || ((c.key === "sky" || c.key === "milky") ? !!SkyLayer : c.key === "guide" ? !!GuideLayer : c.key === "aurora" ? !!AuroraLayer : c.key === "plates" ? !!PlateLayer : !!layerById(c.key)));
+  ].filter(c => c.key === "wind" || c.key === "map" || ((c.key === "sky" || c.key === "milky") ? !!SkyLayer : c.key === "guide" ? !!GuideLayer : c.key === "aurora" ? !!AuroraLayer : c.key === "plates" ? !!PlateLayer : c.key === "capitals" ? !!CapitalLayer : !!layerById(c.key)));
   /* 見方のセット（プリセット）：物語ごとに、関係が見える組み合わせをまとめて出す。そこから1つずつ足し引きもできる。
      国境・地名、赤道・日付変更線は「下敷き」なので、セットでは変えない */
   const PRESETS = [
@@ -1252,13 +1295,31 @@ if (MapLayer) {
   box.querySelector(".chips").innerHTML = CHIPS.map(c => `<button type="button" data-chip="${c.key}">${c.label}</button>`).join("");
   box.querySelector(".presets").insertAdjacentHTML("beforeend", PRESETS.filter(P => P.on.some(k => CHIPS.find(c => c.key === k))).map(P => `<button type="button" data-preset="${P.key}">${P.label}</button>`).join(""));
   var syncChips = () => box.querySelectorAll("[data-chip]").forEach(b => b.setAttribute("aria-pressed", String(!!CHIPS.find(c => c.key === b.dataset.chip).get())));
+  /* 地名の地球儀：文字が見やすいよう、選べる層をしぼった固定モード。入る前の状態を覚えておき、出るときに戻す */
+  const NAMES_OK = ["map", "capitals", "guide", "plates", "quakes", "volcanoes"], NAMES_OFF_AT_START = ["quakes", "volcanoes", "plates"];
+  const OVERLAYS = ["quakes", "volcanoes", "plates", "sats", "aurora", "milky", "sky", "capitals"];
+  let curMode = null, saved = null;
   const setMode = k => {
-    const m = MODES[k]; VisualParticles.visible = m.wind; MapLayer.visible = m.map; globe.material.uniforms.uNight.value = m.night;
+    const m = MODES[k];
+    if (k === "names" && curMode !== "names") saved = Object.fromEntries(CHIPS.map(c => [c.key, !!c.get()]));
+    VisualParticles.visible = m.wind; MapLayer.visible = m.map; globe.material.uniforms.uNight.value = m.night;
     if (GuideLayer) GuideLayer.visible = Boolean(m.map || GuideLayer.userOn);   /* ふつうの地球儀では最初から出す。流れる地球では自分で出したときだけ */
-    for (const l of SCALAR_LAYERS) { const v = Boolean((m.scalar || l.profile.ground) && (!l.profile.modes || l.profile.modes.includes(k)) && (!l.profile.optIn || l.userOn)) /* undefined だと three.js は「見える」と扱うので必ず真偽値に */; l.visible = v; const cb = document.getElementById("t-" + l.id); if (cb) cb.checked = v; }
+    for (const l of SCALAR_LAYERS) { const v = Boolean(!m.names && (m.scalar || l.profile.ground) && (!l.profile.modes || l.profile.modes.includes(k)) && (!l.profile.optIn || l.userOn)) /* undefined だと three.js は「見える」と扱うので必ず真偽値に */; l.visible = v; const cb = document.getElementById("t-" + l.id); if (cb) cb.checked = v; }
     box.querySelectorAll("[data-mode]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.mode === k)));
     box.querySelector(".viewbox").hidden = !m.map;
-    document.getElementById("d-mode").textContent = m.wind ? "風" : "地球儀";
+    document.getElementById("d-mode").textContent = m.names ? "地名" : m.wind ? "風" : "地球儀";
+    if (m.names) {
+      for (const c of CHIPS) if ((!NAMES_OK.includes(c.key) || NAMES_OFF_AT_START.includes(c.key)) && c.get()) c.set(false);
+      if (CapitalLayer && !CapitalLayer.visible) CapitalLayer.visible = true;
+    } else if (curMode === "names" && saved) {
+      for (const c of CHIPS) if (OVERLAYS.includes(c.key) && saved[c.key] !== undefined && !!c.get() !== saved[c.key]) c.set(saved[c.key]);
+      saved = null;
+    }
+    box.querySelectorAll("[data-chip]").forEach(b => { b.disabled = !!m.names && !NAMES_OK.includes(b.dataset.chip); });
+    box.querySelectorAll("[data-preset]").forEach(b => { b.disabled = !!m.names; });
+    const wh = box.querySelector(".windh"); if (wh) wh.hidden = !!m.names;
+    box.querySelector(".names-note").hidden = !m.names;
+    curMode = k;
     syncChips();
     updateChip();
   };
@@ -1347,7 +1408,7 @@ function loop(now) {
   const dt = Math.min(now - last, 100); last = now;
   frames.push(dt); if (frames.length > 120) frames.shift();
   if (VisualParticles.visible) VisualParticles.step(Math.min(dt / 16.667, 3));
-  MapLayer?.tick(); SkyLayer?.tick(); GuideLayer?.tick(); AuroraLayer?.tick(now); ShakeRipples?.tick(now, !!FEATURE_LAYERS.find(l => l.id === "quakes")?.visible);
+  MapLayer?.tick(); CapitalLayer?.tick(); SkyLayer?.tick(); GuideLayer?.tick(); AuroraLayer?.tick(now); ShakeRipples?.tick(now, !!FEATURE_LAYERS.find(l => l.id === "quakes")?.visible);
   Spin.tick(); controls.update();
   for (const l of FEATURE_LAYERS) l.tick(camera.position.length());
   renderer.render(scene, camera);
