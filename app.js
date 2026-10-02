@@ -1284,7 +1284,7 @@ document.getElementById("d-layers").innerHTML = SCALAR_LAYERS.map(l => layerBloc
       <div class="sub">${NIGHT_LIGHTS.note}<br>出典：${NIGHT_LIGHTS.credit}</div></div>` : "")
   + (ON ? `<div class="layer"><label>${LAND_ICE.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${LAND_ICE.kind}</span></label>
       <div class="sub">${LAND_ICE.note}<br>出典：${LAND_ICE.credit}</div></div>` : "")
-  + `<div class="layer"><label>なんで？（小さな辞典）</label>
+  + `<div class="layer" id="why"><label>なんで？（小さな辞典）</label>
       <div class="sub"><a href="learn/typhoon.html" style="color:var(--accent)">台風の風と雲のしくみ</a>：地上で吸い込み、目の壁でのぼり、上空で吹き出し、目で下がる（動く模式図）</div></div>`
   + (StateLayer ? `<div class="layer"><label>${StateLayer.info.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${StateLayer.info.kind}</span></label>
       <div class="sub">${StateLayer.info.note}<br>出典：${StateLayer.info.credit}</div></div>` : "")
@@ -1311,6 +1311,7 @@ if (MapLayer) {
     <div class="presets" role="group" aria-label="見方のプリセット"><span class="cap">見方のセット</span></div>
     <div class="mysets presets" role="group" aria-label="自分のセット"></div>
     <div class="chips" role="group" aria-label="層を出す・消す"></div>
+    <p class="jumps">この下に、層ごとの説明と出典、「なんで？」の小さな辞典があります　<button type="button" data-jump="d-layers">説明へ ↓</button><button type="button" data-jump="why">なんで？へ ↓</button></p>
     <p class="note names-note" hidden>地名の地球儀：文字が見やすいよう、出せる層をしぼっています（国境・地名、首都、赤道・日付変更線、プレート、地震、火山）。拡大すると県・州も出ます（一部の国）。ほかのモードに戻ると、前の状態に戻ります</p>
     ${WIND_LEVELS.slice(1).some(L => Catalog.has(L.id)) ? `<div class="windh"><div class="seg small" role="group" aria-label="風の高さ">${WIND_LEVELS.filter(L => Catalog.has(L.id)).map(L => `<button type="button" data-wlev="${WIND_LEVELS.indexOf(L)}" aria-pressed="${L.id === "wind-10m"}">${L.label}</button>`).join("")}</div>
       <p class="note">風の高さ：上に行くほど地球規模の流れ（偏西風・ジェット気流）が見えます。上空の線は速さに合わせて色の幅を変えています</p></div>` : ""}
@@ -1397,6 +1398,7 @@ if (MapLayer) {
   const setView = v => { MapLayer.view = v; box.querySelectorAll("[data-view]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.view === v))); };
   box.addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return;
     if (b.dataset.wlev) { const k = +b.dataset.wlev; setWindLevel(k).then(() => box.querySelectorAll("[data-wlev]").forEach(x => x.setAttribute("aria-pressed", String(x === b)))); return; }
+    if (b.dataset.jump) { document.getElementById(b.dataset.jump)?.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" }); return; }
     if (b.dataset.preset) { applyPreset(PRESETS.find(P => P.key === b.dataset.preset)); return; }
     if (b.dataset.myadd) { const a = myLoad(); const name = (window.prompt("セットの名前（あとで見て分かる名前）", `マイセット${a.length + 1}`) || "").trim().slice(0, 16); if (!name) return;
       a.push({ name, mode: curMode, on: CHIPS.filter(c => c.get()).map(c => c.key), view: MapLayer.view });
