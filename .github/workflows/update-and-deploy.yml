@@ -5,9 +5,10 @@ name: データ更新と公開
 
 on:
   schedule:
-    # GFS は 00/06/12/18 UTC の実行。+3時間の結果が出そろう頃（約4時間後）に取りに行く
-    # GitHub の時間指定は遅れたり飛んだりするので「だいたいその頃」と考える
-    - cron: "20 4,10,16,22 * * *"
+    # 2時間おきに起きる（GitHub の時間指定は遅れたり飛んだりするので、どれかが飛ばされても次が拾う）。
+    # ただし水源へ取りに行くのは「新しい GFS の回が出ていて、まだ取っていない」ときだけ。
+    # 前に取った回と同じなら、外へは行かず、公開もせずにすぐ終わる（水源への取得は回ごとに1回＝1日4回のまま）
+    - cron: "17 */2 * * *"
   workflow_dispatch:        # 手動で今すぐ実行
   push:
     branches: [main]
@@ -21,6 +22,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      deploy: ${{ steps.reuse.outputs.deploy }}
     steps:
       - uses: actions/checkout@v7
 
@@ -59,12 +62,34 @@ jobs:
               g = json.load(open(m, encoding="utf-8")).get("generatedAt")
               if g:
                   age = (dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(g.replace("Z", "+00:00"))).total_seconds() / 3600
-          hit = os.environ["EVENT"] == "push" and age is not None and age < 6
+          ev, now = os.environ["EVENT"], dt.datetime.now(dt.timezone.utc)
+          # いま取れるはずの一番新しい GFS の回（出そろうのは回の約4時間後）
+          expect = (now - dt.timedelta(hours=4)).replace(minute=0, second=0, microsecond=0)
+          expect = expect.replace(hour=expect.hour - expect.hour % 6)
+          have = None
+          if os.path.exists(m):
+              it = json.load(open(m, encoding="utf-8"))["layers"].get("wind-10m", {}).get("meta", {}).get("issuedTime")
+              if it:
+                  have = dt.datetime.fromisoformat(it.replace("Z", "+00:00"))
+          deploy = True
+          if ev == "push":
+              hit = age is not None and age < 6
+          elif ev == "schedule":
+              hit = have is not None and have >= expect and age is not None and age < 7
+              deploy = not hit                     # 何も新しくないときは、公開もしない
+          else:
+              hit = False                          # 手動（Run workflow）は、いつでも取りに行く
           if hit:
               shutil.copytree("saved_latest", "_site/data/latest")
-          msg = f"前回の一式を使う（{age:.1f}時間前に取得・外へは取りに行かない）" if hit else ("新しく取りに行く" + (f"（前回の一式は{age:.1f}時間前）" if age is not None else "（前回の一式なし）"))
-          print(f"::notice::データ取得: {os.environ['EVENT']} → {msg}")
-          open(os.environ["GITHUB_OUTPUT"], "a").write(f"hit={'true' if hit else 'false'}\n")
+          cyc = lambda t: t.strftime("%m/%d %HZ") if t else "なし"
+          if ev == "schedule" and hit:
+              msg = f"新しい回はまだ（持っている回 {cyc(have)}／次に期待する回 {cyc(expect + dt.timedelta(hours=6))}）。外へも公開も行かずに終わる"
+          elif hit:
+              msg = f"前回の一式を使う（{age:.1f}時間前に取得・外へは取りに行かない）"
+          else:
+              msg = "新しく取りに行く" + (f"（持っている回 {cyc(have)}／いま取れるはずの回 {cyc(expect)}）" if have else "（前回の一式なし）")
+          print(f"::notice::データ取得: {ev} → {msg}")
+          open(os.environ["GITHUB_OUTPUT"], "a").write(f"hit={'true' if hit else 'false'}\ndeploy={'true' if deploy else 'false'}\n")
           PY
 
       - name: 最新の GFS（風・降水・気圧）を取得して変換
@@ -105,38 +130,42 @@ jobs:
       # 火山と揺れの波紋：自分の置き場を持ち、取ったものは取り直さない（同じ月の一覧・同じ日の週報・同じ地震の ShakeMap）。
       # だから push でも走らせてよい（置き場にない新しい分だけを取りに行く）
       - uses: actions/cache/restore@v6
+        if: steps.reuse.outputs.deploy == 'true'
         with:
           path: volc_cache
           key: volc-${{ github.run_id }}
           restore-keys: volc-
-      - name: 火山（スミソニアン GVP：一覧は月1回、週報は1日1回まで）
+      - name: 火山（NOAA NCEI の一覧、月1回）
+        if: steps.reuse.outputs.deploy == 'true'
         continue-on-error: true
         run: python scripts/fetch_volcanoes.py --latest _site/data/latest --cache volc_cache
       - uses: actions/cache/restore@v6
+        if: steps.reuse.outputs.deploy == 'true'
         with:
           path: shake_cache
           key: shake-${{ github.run_id }}
           restore-keys: shake-
       - name: 揺れが広がった範囲（USGS ShakeMap、M5以上・新しい地震だけ）
+        if: steps.reuse.outputs.deploy == 'true'
         continue-on-error: true
         run: python scripts/fetch_shakemaps.py --latest _site/data/latest --cache shake_cache
       - uses: actions/cache/save@v6
-        if: hashFiles('volc_cache/*') != ''
+        if: steps.reuse.outputs.deploy == 'true' && hashFiles('volc_cache/*') != ''
         with:
           path: volc_cache
           key: volc-${{ github.run_id }}
       - uses: actions/cache/save@v6
-        if: hashFiles('shake_cache/*') != ''
+        if: steps.reuse.outputs.deploy == 'true' && hashFiles('shake_cache/*') != ''
         with:
           path: shake_cache
           key: shake-${{ github.run_id }}
 
       # 一式を置き場に残す（次にコードを送ったとき、これを使う）。push で火山などを足した分も含めて残す。一式が作れなかったときは残さない
       - name: 取った一式を置き場へ
-        if: hashFiles('_site/data/latest/manifest.json') != ''
+        if: steps.reuse.outputs.deploy == 'true' && hashFiles('_site/data/latest/manifest.json') != ''
         run: rm -rf saved_latest && cp -r _site/data/latest saved_latest
       - uses: actions/cache/save@v6
-        if: hashFiles('_site/data/latest/manifest.json') != ''
+        if: steps.reuse.outputs.deploy == 'true' && hashFiles('_site/data/latest/manifest.json') != ''
         with:
           path: saved_latest
           key: latest-${{ github.run_id }}
@@ -144,13 +173,16 @@ jobs:
       # 空港の観測（METAR）は棚に戻した（2026-09-29）。取得の仕組みは scripts/fetch_metar.py に残してある
 
       - uses: actions/configure-pages@v6
+        if: steps.reuse.outputs.deploy == 'true'
 
       - uses: actions/upload-pages-artifact@v5
+        if: steps.reuse.outputs.deploy == 'true'
         with:
           path: _site
 
   deploy:
     needs: build
+    if: needs.build.outputs.deploy == 'true'
     runs-on: ubuntu-latest
     # 公開だけは一度に一つ（待っている定時の実行が、コード更新の公開を止めないように build 側には付けない）
     concurrency:
