@@ -9,7 +9,12 @@ on:
     # ただし水源へ取りに行くのは「新しい GFS の回が出ていて、まだ取っていない」ときだけ。
     # 前に取った回と同じなら、外へは行かず、公開もせずにすぐ終わる（水源への取得は回ごとに1回＝1日4回のまま）
     - cron: "17 */2 * * *"
-  workflow_dispatch:        # 手動で今すぐ実行
+  workflow_dispatch:        # 手動・外からの起こし（ルミの予定タスク）。force=true のときだけ、新しい回がなくても取りに行く
+    inputs:
+      force:
+        description: "新しいデータがなくても取りに行く（ふだんは false）"
+        type: boolean
+        default: false
   push:
     branches: [main]
 
@@ -53,6 +58,7 @@ jobs:
         name: 取りに行くかどうかを決める
         env:
           EVENT: ${{ github.event_name }}
+          FORCE: ${{ inputs.force }}
         run: |
           python - <<'PY'
           import datetime as dt, json, os, shutil
@@ -74,21 +80,22 @@ jobs:
           deploy = True
           if ev == "push":
               hit = age is not None and age < 6
-          elif ev == "schedule":
+          elif ev == "schedule" or (ev == "workflow_dispatch" and os.environ.get("FORCE", "").lower() != "true"):
               hit = have is not None and have >= expect and age is not None and age < 7
-              deploy = not hit                     # 何も新しくないときは、公開もしない
+              deploy = not hit                     # 何も新しくないときは、公開もしない（GitHub の定時も、ルミの起こしも同じ）
           else:
-              hit = False                          # 手動（Run workflow）は、いつでも取りに行く
+              hit = False                          # 手動で force=true のときだけ、いつでも取りに行く
           if hit:
               shutil.copytree("saved_latest", "_site/data/latest")
           cyc = lambda t: t.strftime("%m/%d %HZ") if t else "なし"
-          if ev == "schedule" and hit:
+          if ev != "push" and hit:
               msg = f"新しい回はまだ（持っている回 {cyc(have)}／次に期待する回 {cyc(expect + dt.timedelta(hours=6))}）。外へも公開も行かずに終わる"
           elif hit:
               msg = f"前回の一式を使う（{age:.1f}時間前に取得・外へは取りに行かない）"
           else:
               msg = "新しく取りに行く" + (f"（持っている回 {cyc(have)}／いま取れるはずの回 {cyc(expect)}）" if have else "（前回の一式なし）")
-          print(f"::notice::データ取得: {ev} → {msg}")
+          who = {"schedule": "GitHub の定時", "workflow_dispatch": "外からの起こし（手動・ルミ）" + ("・強制" if os.environ.get("FORCE", "").lower() == "true" else ""), "push": "コードの更新"}.get(ev, ev)
+          print(f"::notice::データ取得: {who} → {msg}")
           open(os.environ["GITHUB_OUTPUT"], "a").write(f"hit={'true' if hit else 'false'}\ndeploy={'true' if deploy else 'false'}\n")
           PY
 
