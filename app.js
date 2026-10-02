@@ -957,7 +957,7 @@ function createSatLayer() {
     profile: {
       describe() {
         const rows = Object.entries(SAT_STYLE).filter(([k]) => counts[k]).map(([k, st]) => `<span style="color:rgb(${st.color.map(c => Math.round(c * 255)).join(",")})">●</span> ${st.name} <span class="num">${counts[k]}</span>機（本当の高さ ${st.real}）`).join("<br>");
-        return `${rows}<br>上から順に：ひまわり・みちびき ＞ ガリレオ ＞ GPS ＞ ハッブル ＞ 宇宙ステーション。<b>高さは縮めて描いています</b>（順番は本物のまま。ISS はほぼ本物の高さ）<br>ISS・天宮・ハッブル：実線＝さっき通った道、点線＝これから（前後約46分）。みちびき：日本とオーストラリアの上を行き来する「8の字」（1日で一周）。ひまわり：地球と同じ速さで回るので、いつも同じ場所に止まって見える<br>${meta.caution || ""}<br>点をタップで名前と本当の高さ<br><a href="https://spotthestation.nasa.gov/" target="_blank" rel="noopener" style="color:var(--accent)">ISS が肉眼で見える時刻（NASA）</a>・<a href="https://qzss.go.jp/" target="_blank" rel="noopener" style="color:var(--accent)">みちびき（内閣府）</a><br>出典：${meta.credit}`; },
+        return `ここに出しているのは名前の知られた衛星だけです。宇宙全体で動いている人工衛星は約1万6,600機（2026年9月ごろ。うち約3分の2が Starlink）<br>${rows}<br>上から順に：ひまわり・みちびき ＞ ガリレオ ＞ GPS ＞ ハッブル ＞ 宇宙ステーション。<b>高さは縮めて描いています</b>（順番は本物のまま。ISS はほぼ本物の高さ）<br>ISS・天宮・ハッブル：実線＝さっき通った道、点線＝これから（前後約46分）。みちびき：日本とオーストラリアの上を行き来する「8の字」（1日で一周）。ひまわり：地球と同じ速さで回るので、いつも同じ場所に止まって見える<br>${meta.caution || ""}<br>点をタップで名前と本当の高さ<br><a href="https://spotthestation.nasa.gov/" target="_blank" rel="noopener" style="color:var(--accent)">ISS が肉眼で見える時刻（NASA）</a>・<a href="https://qzss.go.jp/" target="_blank" rel="noopener" style="color:var(--accent)">みちびき（内閣府）</a><br>出典：${meta.credit}`; },
       present(s) { const q = s.cur; return `${s.ja}　<span class="num">${s.name}</span>　本当の高さ 約<span class="num">${fmtKm(q.alt)} km</span>　<span class="num">${Math.abs(q.lat).toFixed(1)}°${q.lat >= 0 ? "N" : "S"} ${Math.abs(q.lon).toFixed(1)}°${q.lon >= 0 ? "E" : "W"}</span> の上空 <span style="color:var(--ink-faint)">（いまの位置・計算値）</span>`; },
     },
     set visible(v) { on = v; group.visible = v; }, get visible() { return on; },
@@ -1208,6 +1208,7 @@ if (MapLayer) {
   };
   const box = document.createElement("div"); box.className = "modes";
   box.innerHTML = `<div class="seg" role="group" aria-label="見せ方">${Object.entries(MODES).map(([k, m]) => `<button type="button" data-mode="${k}">${m.label}</button>`).join("")}</div>
+    <div class="presets" role="group" aria-label="見方のプリセット"><span class="cap">見方のセット</span></div>
     <div class="chips" role="group" aria-label="層を出す・消す"></div>
     ${WIND_LEVELS.slice(1).some(L => Catalog.has(L.id)) ? `<div class="windh"><div class="seg small" role="group" aria-label="風の高さ">${WIND_LEVELS.filter(L => Catalog.has(L.id)).map(L => `<button type="button" data-wlev="${WIND_LEVELS.indexOf(L)}" aria-pressed="${L.id === "wind-10m"}">${L.label}</button>`).join("")}</div>
       <p class="note">風の高さ：上に行くほど地球規模の流れ（偏西風・ジェット気流）が見えます。上空の線は速さに合わせて色の幅を変えています</p></div>` : ""}
@@ -1234,7 +1235,22 @@ if (MapLayer) {
     { key: "map", label: "国境・地名", get: () => MapLayer.visible, set: v => { MapLayer.visible = v; box.querySelector(".viewbox").hidden = !v; } },
     { key: "sky", label: "✦ 星座", get: () => SkyLayer?.visible, set: v => { if (SkyLayer) SkyLayer.visible = v; } },
   ].filter(c => c.key === "wind" || c.key === "map" || ((c.key === "sky" || c.key === "milky") ? !!SkyLayer : c.key === "guide" ? !!GuideLayer : c.key === "aurora" ? !!AuroraLayer : c.key === "plates" ? !!PlateLayer : !!layerById(c.key)));
+  /* 見方のセット（プリセット）：物語ごとに、関係が見える組み合わせをまとめて出す。そこから1つずつ足し引きもできる。
+     国境・地名、赤道・日付変更線は「下敷き」なので、セットでは変えない */
+  const PRESETS = [
+    { key: "earth", label: "動く大地", on: ["plates", "quakes", "volcanoes"] },
+    { key: "fluid", label: "動く空と海", on: ["wind", "cloud-ir", "rain", "pressure", "sst-anom", "sea-ice"] },
+    { key: "night", label: "夜空", on: ["sky", "milky", "aurora"] },
+    { key: "space", label: "宇宙", on: ["sats", "aurora", "milky"], far: 8 },
+  ];
+  const KEEP = ["map", "guide"];
+  const applyPreset = P => {
+    for (const c of CHIPS) { if (KEEP.includes(c.key)) continue; const want = P.on.includes(c.key); if (!!c.get() !== want) c.set(want); }
+    if (P.far && camera.position.length() < P.far) camera.position.setLength(P.far);   /* 宇宙は、衛星が入るところまで引く */
+    syncChips(); updateChip();
+  };
   box.querySelector(".chips").innerHTML = CHIPS.map(c => `<button type="button" data-chip="${c.key}">${c.label}</button>`).join("");
+  box.querySelector(".presets").insertAdjacentHTML("beforeend", PRESETS.filter(P => P.on.some(k => CHIPS.find(c => c.key === k))).map(P => `<button type="button" data-preset="${P.key}">${P.label}</button>`).join(""));
   var syncChips = () => box.querySelectorAll("[data-chip]").forEach(b => b.setAttribute("aria-pressed", String(!!CHIPS.find(c => c.key === b.dataset.chip).get())));
   const setMode = k => {
     const m = MODES[k]; VisualParticles.visible = m.wind; MapLayer.visible = m.map; globe.material.uniforms.uNight.value = m.night;
@@ -1249,6 +1265,7 @@ if (MapLayer) {
   const setView = v => { MapLayer.view = v; box.querySelectorAll("[data-view]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.view === v))); };
   box.addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return;
     if (b.dataset.wlev) { const k = +b.dataset.wlev; setWindLevel(k).then(() => box.querySelectorAll("[data-wlev]").forEach(x => x.setAttribute("aria-pressed", String(x === b)))); return; }
+    if (b.dataset.preset) { applyPreset(PRESETS.find(P => P.key === b.dataset.preset)); return; }
     if (b.dataset.chip) { const c = CHIPS.find(c => c.key === b.dataset.chip); c.set(!c.get()); syncChips(); return; }   /* 一つだけ出す・消す。他の層は勝手に消さない */
     if (b.dataset.mode) setMode(b.dataset.mode); if (b.dataset.view) setView(b.dataset.view); });
   setView("jp"); setMode("flow");
