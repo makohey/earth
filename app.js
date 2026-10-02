@@ -175,6 +175,7 @@ function buildLandMask() {
   return tex;
 }
 const sunDir = new THREE.Vector3();
+let spinAngle = 0;   /* 自転の演出で回した角度（ラジアン。西回りなので負）。星の枠もこの分だけ回す */
 const globe = new THREE.Mesh(new THREE.SphereGeometry(1, 128, 96), new THREE.ShaderMaterial({
   uniforms: { uLand: { value: buildLandMask() }, uSun: { value: sunDir }, uNight: { value: 1 }, uLights: { value: null }, uLightsOn: { value: 0 }, uIce: { value: null }, uIceOn: { value: 0 }, uBathy: { value: null }, uBathyOn: { value: 0 } },
   vertexShader: `varying vec3 vPos; void main(){ vPos = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
@@ -630,7 +631,7 @@ async function createSkyLayer() {
     set milky(v) { milkyOn = v; sync(); }, get milky() { return milkyOn; },
     tick() {
       if (!frame.visible) return;
-      frame.rotation.y = -gmstDeg(Clock.now()) * D2R;               // 経度＝赤経−恒星時
+      frame.rotation.y = -gmstDeg(Clock.now()) * D2R + spinAngle;   // 経度＝赤経−恒星時（自転の演出中は回した分を足す）
       const dist = camera.position.length(), h = stage.clientHeight || 800, maxRank = dist > 3.2 ? 1 : 2;
       cam.copy(camera.position).normalize();
       for (const sp of labels) {
@@ -1231,6 +1232,37 @@ const Spin = (() => {
     },
   };
 })();
+/* ===== 自転の演出：太陽と星は宇宙に止めたまま、地球だけが西から東へ回って見えるようにする =====
+   中身は「カメラ・太陽の向き・星の枠」を地軸まわりに西へ回すこと（地球に貼りついたデータは動かさないので、データは嘘にならない）。
+   実際の速さ（1時間に15°）ではない。回しているあいだの昼夜の位置は本当の時刻からずれるので、止めたら本当の太陽の位置に戻す。
+   指で触ったら止まり、離して少したつとまた回る */
+const realSun = () => { const s = subsolarPoint(Clock.now()), p = [0,0,0]; toXYZ(s.lat, s.lon, 1, p, 0); sunDir.set(p[0], p[1], p[2]); };
+const Rotate = (() => {
+  const Y = new THREE.Vector3(0, 1, 0), SPEEDS = { slow: 10, mid: 30, fast: 60 };   /* 画面の1秒で、地球の何分ぶん回すか */
+  let on = false, speed = "mid", pauseUntil = 0, satWas = false, onChange = null;
+  const el = renderer.domElement;
+  el.addEventListener("pointerdown", () => { pauseUntil = Infinity; });
+  const resume = () => { if (pauseUntil === Infinity) pauseUntil = performance.now() + 2500; };
+  el.addEventListener("pointerup", resume); el.addEventListener("pointercancel", resume);
+  el.addEventListener("wheel", () => { pauseUntil = Math.max(pauseUntil, performance.now() + 1500); }, { passive: true });
+  return {
+    SPEEDS,
+    get on() { return on; }, get speed() { return speed; }, set speed(v) { if (SPEEDS[v]) speed = v; },
+    set onChange(f) { onChange = f; },
+    set on(v) {
+      v = !!v; if (v === on) return; on = v;
+      if (on) { satWas = !!SatLayer?.visible; if (satWas) SatLayer.visible = false; }   /* 衛星は「いま」の位置で飛ぶので、早回しの間はお休み（止めたら元に戻す） */
+      else { spinAngle = 0; realSun(); if (SatLayer && satWas) SatLayer.visible = true; satWas = false; }
+      onChange?.(on);
+    },
+    tick(now, dt) {
+      if (!on || now < pauseUntil) return;
+      const a = -(SPEEDS[speed] / 1440) * 2 * Math.PI * (dt / 1000);   /* 1440分＝1日で1周 */
+      camera.position.applyAxisAngle(Y, a); camera.lookAt(0, 0, 0);
+      sunDir.applyAxisAngle(Y, a); spinAngle += a;
+    },
+  };
+})();
 function resize() { const w = stage.clientWidth, h = stage.clientHeight; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); }
 window.addEventListener("resize", resize); resize();
 
@@ -1335,6 +1367,9 @@ if (MapLayer) {
       </ul>
       よく使う端末ごとに、1回ずつ作ってください。
     </div>
+    <div class="spinrow presets" role="group" aria-label="自転の演出"><span class="cap">自転</span><button type="button" data-spin="1" aria-pressed="false">↻ 地球を回す</button>
+      <span class="spinspd" hidden>${Object.entries({ slow: "ゆっくり", mid: "ふつう", fast: "はやい" }).map(([k, t]) => `<button type="button" data-spinspd="${k}" aria-pressed="${k === Rotate.speed}">${t}</button>`).join("")}</span></div>
+    <p class="note spin-note" hidden></p>
     <div class="groups" aria-label="層を出す・消す"></div>
     <p class="jumps">この下に、層ごとの説明と出典、「なんで？」の小さな辞典があります　<button type="button" data-jump="d-layers">説明へ ↓</button><button type="button" data-jump="why">なんで？へ ↓</button></p>
     <p class="note names-note" hidden>地名の地球儀：文字が見やすいよう、出せる層をしぼっています（国境・地名、首都、赤道・日付変更線、プレート、地震、火山）。拡大すると県・州も出ます（一部の国）。ほかのモードに戻ると、前の状態に戻ります</p>
@@ -1374,7 +1409,7 @@ if (MapLayer) {
   ];
   const KEEP = ["map", "guide"];
   const applyPreset = P => {
-    for (const c of CHIPS) { if (KEEP.includes(c.key)) continue; const want = P.on.includes(c.key); if (!!c.get() !== want) c.set(want); }
+    for (const c of CHIPS) { if (KEEP.includes(c.key) || box.querySelector(`[data-chip="${c.key}"]`)?.disabled) continue; const want = P.on.includes(c.key); if (!!c.get() !== want) c.set(want); }
     if (P.far && camera.position.length() < P.far) camera.position.setLength(P.far);   /* 宇宙は、衛星が入るところまで引く */
     syncChips(); updateChip();
   };
@@ -1460,7 +1495,8 @@ if (MapLayer) {
       saved = null;
     }
     box.querySelectorAll("[data-chip]").forEach(b => { b.disabled = !!m.names && !NAMES_OK.includes(b.dataset.chip); });
-    box.querySelectorAll("[data-preset]").forEach(b => { b.disabled = !!m.names; });   /* 自分のセットは地名モードでも使える（出せない層は飛ばす） */
+    box.querySelectorAll("[data-preset]").forEach(b => { b.disabled = !!m.names; });
+    if (Rotate.on) { const sc = box.querySelector('[data-chip="sats"]'); if (sc) sc.disabled = true; }   /* 自分のセットは地名モードでも使える（出せない層は飛ばす） */
     const wh = box.querySelector(".windh"); if (wh) wh.hidden = !!m.names;
     const wn = box.querySelector(".wnames"); if (wn) wn.hidden = !!m.names;
     box.querySelector(".names-note").hidden = !m.names;
@@ -1468,6 +1504,21 @@ if (MapLayer) {
     syncChips();
     updateChip();
   };
+  /* 自転の演出：ボタンの見た目と、衛星のチップを押せなくする（消したのではなく、お休み） */
+  const SPIN_TXT = { slow: "画面の1秒が地球の10分（1周は約2分半）", mid: "画面の1秒が地球の30分（1周は48秒）", fast: "画面の1秒が地球の1時間（1周は24秒）" };
+  const spinSync = () => {
+    const on = Rotate.on, b = box.querySelector("[data-spin]");
+    b.setAttribute("aria-pressed", String(on)); b.textContent = on ? "■ 回すのをやめる" : "↻ 地球を回す";
+    box.querySelector(".spinspd").hidden = !on;
+    box.querySelectorAll("[data-spinspd]").forEach(x => x.setAttribute("aria-pressed", String(x.dataset.spinspd === Rotate.speed)));
+    const nt = box.querySelector(".spin-note"); nt.hidden = !on;
+    nt.innerHTML = `<b>自転の演出</b>：太陽を止めたまま、地球を西から東へ回しています。本当の速さ（1時間に15°、1周24時間）ではなく、${SPIN_TXT[Rotate.speed]}。回している間の昼と夜の位置は、本当の時刻とは合いません（やめると本当の位置に戻ります）。雲・風・地震などのデータは地球に付いたまま一緒に回るので、データの時刻は変わりません。${SatLayer ? "人工衛星は「いま」の位置で飛んでいるので、回している間はお休みです。" : ""}触ると止まり、離すとまた回ります`;
+    const sc = box.querySelector('[data-chip="sats"]'); if (sc) sc.disabled = on || (NamesMode && !NAMES_OK.includes("sats"));
+    const cb = document.getElementById("t-sats"); if (cb) { cb.disabled = on; cb.checked = !!SatLayer?.visible; }
+    document.getElementById("spinbadge")?.toggleAttribute("hidden", !on);
+    syncChips();
+  };
+  Rotate.onChange = spinSync;
   const setView = v => { MapLayer.view = v; box.querySelectorAll("[data-view]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.view === v))); };
   box.addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return;
     if (b.dataset.wlev) { if (wname) setWName(null); const k = +b.dataset.wlev; setWindLevel(k).then(() => box.querySelectorAll("[data-wlev]").forEach(x => x.setAttribute("aria-pressed", String(x === b)))); return; }
@@ -1476,6 +1527,8 @@ if (MapLayer) {
     if (b.dataset.wname) { setWName(wname === b.dataset.wname ? null : b.dataset.wname); return; }
     if (b.dataset.wdir) { setDir(!VisualParticles.dirMode); return; }
     if (b.dataset.jump) { document.getElementById(b.dataset.jump)?.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" }); return; }
+    if (b.dataset.spin) { Rotate.on = !Rotate.on; return; }
+    if (b.dataset.spinspd) { Rotate.speed = b.dataset.spinspd; spinSync(); return; }
     if (b.dataset.preset) { applyPreset(PRESETS.find(P => P.key === b.dataset.preset)); return; }
     if (b.dataset.myhelp) { const h = box.querySelector(".myhelp"); h.hidden = !h.hidden; b.setAttribute("aria-expanded", String(!h.hidden)); return; }
     if (b.dataset.myadd) { const a = myLoad(); const name = (window.prompt("セットの名前（あとで見て分かる名前）", `マイセット${a.length + 1}`) || "").trim().slice(0, 16); if (!name) return;
@@ -1562,14 +1615,14 @@ window.addEventListener("keydown", e => { if (e.key === "d" || e.key === "D") me
 document.getElementById("m-n").textContent = VisualParticles.count.toLocaleString();
 const frames = [];
 
-{ const s = subsolarPoint(Clock.now()), p = [0,0,0]; toXYZ(s.lat, s.lon, 1, p, 0); sunDir.set(p[0], p[1], p[2]); }
+realSun();
 let last = performance.now(), meterAt = last;
 function loop(now) {
   const dt = Math.min(now - last, 100); last = now;
   frames.push(dt); if (frames.length > 120) frames.shift();
   if (VisualParticles.visible) VisualParticles.step(Math.min(dt / 16.667, 3));
   for (const l of SCALAR_LAYERS) l.tick?.(); MapLayer?.tick(); CapitalLayer?.tick(); StateLayer?.tick(); SkyLayer?.tick(); GuideLayer?.tick(); AuroraLayer?.tick(now); ShakeRipples?.tick(now, !!FEATURE_LAYERS.find(l => l.id === "quakes")?.visible);
-  Spin.tick(); controls.update();
+  Rotate.tick(now, dt); Spin.tick(); controls.update();
   for (const l of FEATURE_LAYERS) l.tick(camera.position.length());
   renderer.render(scene, camera);
   if (!meter.hidden && now - meterAt > 400) {
