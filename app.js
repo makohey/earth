@@ -318,6 +318,7 @@ const PRESSURE_PROFILE = {
   color: [0.86, 0.88, 1.00], opacity: 0.30, boldOpacity: 0.48,
   modes: ["both"],                                              // 既定では「重ねる」のときだけ
   present: { name: "気圧", units: "hPa", digits: 0, below: [-Infinity, ""], missing: "データなし" },
+  extrema: { radius: 6, minDrop: 4 },                            // 低・高の中心に気圧の数字を出す（まわり±6°で一番低い／高い所、まわりより4hPa以上の差）
 };
 function createContourLayer(field, profile, id) {
   const g = Catalog.gridInfo(id), vals = Catalog.scalarValues(id), nx = g.nx, ny = g.ny;
@@ -344,8 +345,25 @@ function createContourLayer(field, profile, id) {
     const m = new THREE.LineBasicMaterial({ color: new THREE.Color(...profile.color), transparent: true, opacity: op, depthWrite: false });
     m.userData.base = op; mats.push(m); group.add(new THREE.LineSegments(geo, m));
   }
+  /* 低気圧・高気圧の中心：まわりで一番低い（高い）所に「低 984」「高 1028」と数字を出す。台風かどうかの判定はしない */
+  const marks = [];
+  if (profile.extrema) {
+    const R = profile.extrema.radius, drop = profile.extrema.minDrop;
+    for (let j = R; j < ny - R; j++) { const lat = g.lat0 - j * g.dy; if (Math.abs(lat) > 78) continue;
+      for (let i = 0; i < nx; i++) { const v = at(i, j); if (Number.isNaN(v)) continue;
+        let isMin = true, isMax = true, mx = -Infinity, mn = Infinity;
+        for (let dj = -R; dj <= R && (isMin || isMax); dj++) for (let di = -R; di <= R; di++) { if (!di && !dj) continue; const w = at(i + di, j + dj); if (Number.isNaN(w)) continue;
+          if (w < v || (w === v && (dj < 0 || (dj === 0 && di < 0)))) isMin = false; if (w > v || (w === v && (dj < 0 || (dj === 0 && di < 0)))) isMax = false; if (w > mx) mx = w; if (w < mn) mn = w; }
+        if (isMin && mx - v >= drop) marks.push({ low: true, v, lat, lon: g.lon0 + i * g.dx });
+        if (isMax && v - mn >= drop) marks.push({ low: false, v, lat, lon: g.lon0 + i * g.dx }); } }
+    for (const m of marks) { const sp = makeTextSprite(`${m.low ? "低" : "高"} ${Math.round(m.v)}`, m.low ? "rgba(150,190,255,0.98)" : "rgba(255,190,150,0.95)", 700, 12);
+      toXYZ(m.lat, m.lon, 1.006, tmp, 0); sp.position.set(...tmp); group.add(sp); m.sp = sp; }
+  }
+  const cam = new THREE.Vector3(), wp = new THREE.Vector3();
   let op = 1;
-  return { id, field, profile, set visible(v) { group.visible = v; }, get visible() { return group.visible; },
+  return { id, field, profile, marks, set visible(v) { group.visible = v; }, get visible() { return group.visible; },
+    tick() { if (!group.visible || !marks.length) return; const h = stage.clientHeight || 800, k = 2 * Math.tan(camera.fov / 2 * D2R) / h; cam.copy(camera.position).normalize();
+      for (const m of marks) { wp.copy(m.sp.position).normalize(); const ok = wp.dot(cam) > 0.25; m.sp.visible = ok; if (ok) { const sc = m.sp.userData.px * k; m.sp.scale.set(sc * m.sp.userData.aspect, sc, 1); } } },
     set opacity(v) { op = v; for (const m of mats) m.opacity = m.userData.base * v; }, get opacity() { return op; } };
 }
 if (ON && Catalog.has("pressure")) SCALAR_LAYERS.push(createContourLayer(createGridScalarField("pressure"), PRESSURE_PROFILE, "pressure"));
@@ -1468,7 +1486,7 @@ function loop(now) {
   const dt = Math.min(now - last, 100); last = now;
   frames.push(dt); if (frames.length > 120) frames.shift();
   if (VisualParticles.visible) VisualParticles.step(Math.min(dt / 16.667, 3));
-  MapLayer?.tick(); CapitalLayer?.tick(); StateLayer?.tick(); SkyLayer?.tick(); GuideLayer?.tick(); AuroraLayer?.tick(now); ShakeRipples?.tick(now, !!FEATURE_LAYERS.find(l => l.id === "quakes")?.visible);
+  for (const l of SCALAR_LAYERS) l.tick?.(); MapLayer?.tick(); CapitalLayer?.tick(); StateLayer?.tick(); SkyLayer?.tick(); GuideLayer?.tick(); AuroraLayer?.tick(now); ShakeRipples?.tick(now, !!FEATURE_LAYERS.find(l => l.id === "quakes")?.visible);
   Spin.tick(); controls.update();
   for (const l of FEATURE_LAYERS) l.tick(camera.position.length());
   renderer.render(scene, camera);
