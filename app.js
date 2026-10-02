@@ -1100,33 +1100,40 @@ const VisualParticles = (() => {
   const R = 1.0035;
   const lat = new Float32Array(N), lon = new Float32Array(N), age = new Float32Array(N), life = new Float32Array(N);
   const V = N * SLOTS * 2;
-  const pos = new Float32Array(V * 3), birth = new Float32Array(V).fill(-1e6), spd = new Float32Array(V);
+  const pos = new Float32Array(V * 3), birth = new Float32Array(V).fill(-1e6), spd = new Float32Array(V), dirA = new Float32Array(V), latA = new Float32Array(V);
   const geo = new THREE.BufferGeometry();
   const aPos = new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage);
   const aBirth = new THREE.BufferAttribute(birth, 1).setUsage(THREE.DynamicDrawUsage);
   const aSpd = new THREE.BufferAttribute(spd, 1).setUsage(THREE.DynamicDrawUsage);
-  geo.setAttribute("position", aPos); geo.setAttribute("aBirth", aBirth); geo.setAttribute("aSpeed", aSpd);
+  const aDir = new THREE.BufferAttribute(dirA, 1).setUsage(THREE.DynamicDrawUsage), aLat = new THREE.BufferAttribute(latA, 1).setUsage(THREE.DynamicDrawUsage);
+  geo.setAttribute("position", aPos); geo.setAttribute("aBirth", aBirth); geo.setAttribute("aSpeed", aSpd); geo.setAttribute("aDir", aDir); geo.setAttribute("aLat", aLat);
   const stopsGLSL = LINE_STOPS.map(([s, c], i) => `if (s <= ${s.toFixed(1)}) { ${i ? `float t=(s-${LINE_STOPS[i-1][0].toFixed(1)})/${(s - LINE_STOPS[i-1][0]).toFixed(1)}; return mix(vec3(${LINE_STOPS[i-1][1].join(",")}),vec3(${c.join(",")}),t);` : `return vec3(${c.join(",")});`} }`).join("\n");
   const mat = new THREE.ShaderMaterial({
-    uniforms: { uTime: { value: 0 }, uTrail: { value: SLOTS } },
+    uniforms: { uTime: { value: 0 }, uTrail: { value: SLOTS }, uDirMode: { value: 0 }, uBandOn: { value: 0 }, uBand: { value: new THREE.Vector2(0, 90) }, uJet: { value: 0 } },
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
     vertexShader: `
-      attribute float aBirth; attribute float aSpeed; uniform float uTime; uniform float uTrail;
-      varying float vA; varying float vS;
+      attribute float aBirth; attribute float aSpeed; attribute float aDir; attribute float aLat; uniform float uTime; uniform float uTrail;
+      varying float vA; varying float vS; varying float vDir; varying float vLat;
       void main(){
         float a = (uTime - aBirth) / uTrail;
-        vA = a; vS = aSpeed;
+        vA = a; vS = aSpeed; vDir = aDir; vLat = aLat;
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
       }`,
     fragmentShader: `
-      varying float vA; varying float vS;
+      uniform float uDirMode; uniform float uBandOn; uniform vec2 uBand; uniform float uJet;
+      varying float vA; varying float vS; varying float vDir; varying float vLat;
       vec3 ramp(float s){ ${stopsGLSL}
         return vec3(${LINE_STOPS[LINE_STOPS.length-1][1].join(",")}); }
       void main(){
         if (vA < 0.0 || vA > 1.0) discard;
         float fade = pow(1.0 - vA, 1.6);
         float strength = mix(0.22, 1.0, smoothstep(1.0, 15.0, vS));
-        gl_FragColor = vec4(ramp(vS) * fade * strength, 1.0);
+        vec3 col = ramp(vS);
+        if (uDirMode > 0.5) col = mix(vec3(0.30, 0.72, 1.00), vec3(1.00, 0.60, 0.28), smoothstep(-0.25, 0.25, vDir));   /* 西へ吹く＝青、東へ吹く＝橙 */
+        float k = 1.0;
+        if (uBandOn > 0.5) { float al = abs(vLat); k = mix(0.12, 1.0, smoothstep(uBand.x - 4.0, uBand.x + 2.0, al) * (1.0 - smoothstep(uBand.y - 2.0, uBand.y + 4.0, al))); }   /* 目安の緯度帯の外は薄く */
+        if (uJet > 0.0) k *= mix(0.2, 1.0, smoothstep(uJet * 0.7, uJet, vS));   /* ジェット気流：速い線だけ明るく */
+        gl_FragColor = vec4(col * fade * strength * k, 1.0);
       }`,
   });
   const lines = new THREE.LineSegments(geo, mat); lines.frustumCulled = false; lines.renderOrder = 2; scene.add(lines);
@@ -1156,13 +1163,19 @@ const VisualParticles = (() => {
       toXYZ(lat[i], lon[i], R, tmpB, 0);
       pos[p] = tmpA[0]; pos[p+1] = tmpA[1]; pos[p+2] = tmpA[2]; pos[p+3] = tmpB[0]; pos[p+4] = tmpB[1]; pos[p+5] = tmpB[2];
       birth[vi] = birth[vi+1] = frame; spd[vi] = spd[vi+1] = sp / ws;   // 色は高さごとの幅で
+      dirA[vi] = dirA[vi+1] = sp > 0 ? u / sp : 0; latA[vi] = latA[vi+1] = lat[i];
     }
     aPos.updateRange.offset = v0 * 3; aPos.updateRange.count = N * 6; aPos.needsUpdate = true;
     aBirth.updateRange.offset = v0; aBirth.updateRange.count = N * 2; aBirth.needsUpdate = true;
     aSpd.updateRange.offset = v0; aSpd.updateRange.count = N * 2; aSpd.needsUpdate = true;
+    for (const A of [aDir, aLat]) { A.updateRange.offset = v0; A.updateRange.count = N * 2; A.needsUpdate = true; }
     mat.uniforms.uTime.value = frame;
   }
-  return { step, count: N, lines, set visible(v) { lines.visible = v; }, get visible() { return lines.visible; } };
+  const U = mat.uniforms;
+  return { step, count: N, lines, set visible(v) { lines.visible = v; }, get visible() { return lines.visible; },
+    /** 見せ方：東西の色分け・目安の緯度帯・ジェット気流の強調（データは変えない） */
+    set dirMode(v) { U.uDirMode.value = v ? 1 : 0; }, get dirMode() { return U.uDirMode.value > 0.5; },
+    setBand(b, jet = 0) { U.uBandOn.value = b ? 1 : 0; if (b) U.uBand.value.set(b[0], b[1]); U.uJet.value = jet; } };
 })();
 
 /* ===== カメラと操作 ===== */
@@ -1322,7 +1335,7 @@ if (MapLayer) {
       </ul>
       よく使う端末ごとに、1回ずつ作ってください。
     </div>
-    <div class="chips" role="group" aria-label="層を出す・消す"></div>
+    <div class="groups" aria-label="層を出す・消す"></div>
     <p class="jumps">この下に、層ごとの説明と出典、「なんで？」の小さな辞典があります　<button type="button" data-jump="d-layers">説明へ ↓</button><button type="button" data-jump="why">なんで？へ ↓</button></p>
     <p class="note names-note" hidden>地名の地球儀：文字が見やすいよう、出せる層をしぼっています（国境・地名、首都、赤道・日付変更線、プレート、地震、火山）。拡大すると県・州も出ます（一部の国）。ほかのモードに戻ると、前の状態に戻ります</p>
     ${WIND_LEVELS.slice(1).some(L => Catalog.has(L.id)) ? `<div class="windh"><div class="seg small" role="group" aria-label="風の高さ">${WIND_LEVELS.filter(L => Catalog.has(L.id)).map(L => `<button type="button" data-wlev="${WIND_LEVELS.indexOf(L)}" aria-pressed="${L.id === "wind-10m"}">${L.label}</button>`).join("")}</div>
@@ -1365,7 +1378,54 @@ if (MapLayer) {
     if (P.far && camera.position.length() < P.far) camera.position.setLength(P.far);   /* 宇宙は、衛星が入るところまで引く */
     syncChips(); updateChip();
   };
-  box.querySelector(".chips").innerHTML = CHIPS.map(c => `<button type="button" data-chip="${c.key}">${c.label}</button>`).join("");
+  /* 層のボタンを分野ごとの枠に分ける（ダッシュボードのように）。枠はたためる（たたんだ状態はこの端末にだけ覚える） */
+  const GROUPS = [
+    { key: "air", en: "AIR", ja: "空気", keys: ["wind", "rain", "cloud-ir", "pressure"] },
+    { key: "sea", en: "SEA", ja: "海", keys: ["sst-anom", "sea-ice"] },
+    { key: "earth", en: "EARTH", ja: "大地", keys: ["quakes", "volcanoes", "plates"] },
+    { key: "space", en: "SPACE", ja: "宇宙", keys: ["sats", "aurora", "milky", "sky"] },
+    { key: "map", en: "MAP", ja: "地図", keys: ["map", "capitals", "guide"] },
+  ];
+  const GKEY = "globe.groupsClosed.v1";
+  const closed = (() => { try { return new Set(JSON.parse(localStorage.getItem(GKEY) || "[]")); } catch (_) { return new Set(); } })();
+  const chipHtml = c => `<button type="button" data-chip="${c.key}">${c.label}</button>`;
+  const placed = new Set();
+  box.querySelector(".groups").innerHTML = GROUPS.map(G => {
+    const cs = G.keys.map(k => CHIPS.find(c => c.key === k)).filter(Boolean); cs.forEach(c => placed.add(c.key)); if (!cs.length) return "";
+    return `<section class="grp" data-grp="${G.key}"${closed.has(G.key) ? " data-closed" : ""}>
+      <button type="button" class="grp-h" data-grptoggle="${G.key}" aria-expanded="${!closed.has(G.key)}"><span class="en">${G.en}</span><span class="ja">${G.ja}</span><span class="cnt" data-cnt="${G.key}"></span><span class="chev" aria-hidden="true">▾</span></button>
+      <div class="grp-b"><div class="chips" role="group" aria-label="${G.ja}の層">${cs.map(chipHtml).join("")}</div></div></section>`; }).join("")
+    + (CHIPS.some(c => !placed.has(c.key)) ? `<section class="grp" data-grp="other"><div class="grp-b"><div class="chips">${CHIPS.filter(c => !placed.has(c.key)).map(chipHtml).join("")}</div></div></section>` : "");
+  const grpBody = k => box.querySelector(`[data-grp="${k}"] .grp-b`);
+  /* 風の高さと風の名前は AIR の中へ、国境の見方は MAP の中へ */
+  const WIND_NAMES = [
+    { key: "trade", label: "貿易風", lev: 0, band: [0, 30], note: "貿易風：赤道〜緯度30°くらいを、東から西へ吹く風（青い線）。北半球では北東から、南半球では南東から吹く。地上から1〜2kmの薄い層" },
+    { key: "west", label: "偏西風", lev: 2, band: [30, 60], note: "偏西風：緯度30〜60°くらいを、西から東へ吹く風（橙の線）。波打ちながら天気を東へ運ぶ。地上から上空まで分厚い層で、上ほど強い" },
+    { key: "jet", label: "ジェット気流", lev: 3, band: [20, 65], jet: 12, note: "ジェット気流：偏西風の中の一番速い筋（約10km）。速い線だけを明るくしている。日本の上空は世界でも特に強い場所" },
+    { key: "polar", label: "極東風", lev: 0, band: [60, 90], note: "極東風：極のまわりを、東から西へ吹く冷たい風（青い線）。弱くて乱れやすい" },
+  ];
+  const airB = grpBody("air");
+  if (airB) {
+    airB.insertAdjacentHTML("beforeend", `<div class="wnames"><span class="cap">風の名前</span>${WIND_NAMES.map(w => `<button type="button" data-wname="${w.key}">${w.label}</button>`).join("")}<button type="button" data-wdir="1" aria-pressed="false">東西の色分け</button></div>
+      <p class="note wname-note" hidden></p>
+      <p class="note wdir-legend" hidden><span style="color:rgb(255,153,71)">━ 東へ吹く風</span>　<span style="color:rgb(77,184,255)">━ 西へ吹く風</span>　（線の色を速さではなく向きで。データはそのまま）</p>`);
+    const wh = box.querySelector(".windh"); if (wh) airB.appendChild(wh);
+  }
+  const mapB = grpBody("map"); if (mapB) mapB.appendChild(box.querySelector(".viewbox"));
+  let wname = null;
+  const setDir = v => { VisualParticles.dirMode = v; const b = box.querySelector("[data-wdir]"); if (b) b.setAttribute("aria-pressed", String(v)); const lg = box.querySelector(".wdir-legend"); if (lg) lg.hidden = !v; };
+  const setWName = async key => {
+    const W = WIND_NAMES.find(w => w.key === key); wname = W ? key : null;
+    box.querySelectorAll("[data-wname]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.wname === wname)));
+    const nt = box.querySelector(".wname-note");
+    if (!W) { VisualParticles.setBand(null); if (nt) nt.hidden = true; return; }
+    const wc = CHIPS.find(c => c.key === "wind"); if (wc && !wc.get()) wc.set(true);
+    if (Catalog.has(WIND_LEVELS[W.lev].id)) { await setWindLevel(W.lev); box.querySelectorAll("[data-wlev]").forEach(x => x.setAttribute("aria-pressed", String(+x.dataset.wlev === W.lev))); }
+    setDir(true); VisualParticles.setBand(W.band, W.jet || 0);
+    if (nt) { nt.textContent = W.note + "。帯の範囲は目安で、実際の風は季節や日によってはみ出します"; nt.hidden = false; }
+    syncChips();
+  };
+  const syncCounts = () => GROUPS.forEach(G => { const el = box.querySelector(`[data-cnt="${G.key}"]`); if (!el) return; const n = G.keys.filter(k => { const c = CHIPS.find(c => c.key === k); return c && c.get(); }).length; el.textContent = n ? `${n}` : ""; });
   box.querySelector(".presets").insertAdjacentHTML("beforeend", PRESETS.filter(P => P.on.some(k => CHIPS.find(c => c.key === k))).map(P => `<button type="button" data-preset="${P.key}">${P.label}</button>`).join(""));
   /* 自分のセット（カスタムプリセット）：いまの組み合わせを、この端末のブラウザに3つまで保存する。サーバーには送らない */
   const MY_KEY = "globe.mySets.v1", MY_MAX = 3;
@@ -1378,7 +1438,7 @@ if (MapLayer) {
       + (a.length < MY_MAX ? `<button type="button" class="add" data-myadd="1">＋ いまの組み合わせを保存</button>` : "");
   };
 
-  var syncChips = () => box.querySelectorAll("[data-chip]").forEach(b => b.setAttribute("aria-pressed", String(!!CHIPS.find(c => c.key === b.dataset.chip).get())));
+  var syncChips = () => { box.querySelectorAll("[data-chip]").forEach(b => b.setAttribute("aria-pressed", String(!!CHIPS.find(c => c.key === b.dataset.chip).get()))); syncCounts(); };
   /* 地名の地球儀：文字が見やすいよう、選べる層をしぼった固定モード。入る前の状態を覚えておき、出るときに戻す */
   const NAMES_OK = ["map", "capitals", "guide", "plates", "quakes", "volcanoes"], NAMES_OFF_AT_START = ["quakes", "volcanoes", "plates"];
   const OVERLAYS = ["quakes", "volcanoes", "plates", "sats", "aurora", "milky", "sky", "capitals"];
@@ -1402,6 +1462,7 @@ if (MapLayer) {
     box.querySelectorAll("[data-chip]").forEach(b => { b.disabled = !!m.names && !NAMES_OK.includes(b.dataset.chip); });
     box.querySelectorAll("[data-preset]").forEach(b => { b.disabled = !!m.names; });   /* 自分のセットは地名モードでも使える（出せない層は飛ばす） */
     const wh = box.querySelector(".windh"); if (wh) wh.hidden = !!m.names;
+    const wn = box.querySelector(".wnames"); if (wn) wn.hidden = !!m.names;
     box.querySelector(".names-note").hidden = !m.names;
     curMode = k; NamesMode = !!m.names;
     syncChips();
@@ -1409,7 +1470,11 @@ if (MapLayer) {
   };
   const setView = v => { MapLayer.view = v; box.querySelectorAll("[data-view]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.view === v))); };
   box.addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return;
-    if (b.dataset.wlev) { const k = +b.dataset.wlev; setWindLevel(k).then(() => box.querySelectorAll("[data-wlev]").forEach(x => x.setAttribute("aria-pressed", String(x === b)))); return; }
+    if (b.dataset.wlev) { if (wname) setWName(null); const k = +b.dataset.wlev; setWindLevel(k).then(() => box.querySelectorAll("[data-wlev]").forEach(x => x.setAttribute("aria-pressed", String(x === b)))); return; }
+    if (b.dataset.grptoggle) { const sec = b.closest(".grp"), k = b.dataset.grptoggle, isClosed = sec.toggleAttribute("data-closed"); b.setAttribute("aria-expanded", String(!isClosed));
+      isClosed ? closed.add(k) : closed.delete(k); try { localStorage.setItem(GKEY, JSON.stringify([...closed])); } catch (_) {} return; }
+    if (b.dataset.wname) { setWName(wname === b.dataset.wname ? null : b.dataset.wname); return; }
+    if (b.dataset.wdir) { setDir(!VisualParticles.dirMode); return; }
     if (b.dataset.jump) { document.getElementById(b.dataset.jump)?.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" }); return; }
     if (b.dataset.preset) { applyPreset(PRESETS.find(P => P.key === b.dataset.preset)); return; }
     if (b.dataset.myhelp) { const h = box.querySelector(".myhelp"); h.hidden = !h.hidden; b.setAttribute("aria-expanded", String(!h.hidden)); return; }
