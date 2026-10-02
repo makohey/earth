@@ -1310,6 +1310,18 @@ if (MapLayer) {
   box.innerHTML = `<div class="seg" role="group" aria-label="見せ方">${Object.entries(MODES).map(([k, m]) => `<button type="button" data-mode="${k}">${m.label}</button>`).join("")}</div>
     <div class="presets" role="group" aria-label="見方のプリセット"><span class="cap">見方のセット</span></div>
     <div class="mysets presets" role="group" aria-label="自分のセット"></div>
+    <div class="myhelp" hidden>
+      <b>自分のセットとは</b>
+      いま出している層の組み合わせに名前を付けて、ワンタップで呼び出せるようにするものです。
+      <ul>
+        <li>覚えるもの：出している層、モード（流れる地球・ふつうの地球儀・重ねる・地名）、国境の見方</li>
+        <li>3つまで保存できます。名前の横の「×」で消せます</li>
+        <li>保存先は<b>この端末の、このブラウザの中だけ</b>です。どこにも送りません</li>
+        <li>そのため、別の端末や別のブラウザ（例：iPhone の Safari で作ったセットを、パソコンや Brave で開く）では出てきません</li>
+        <li>プライベートブラウズを閉じたときや、ブラウザの履歴とデータを消したときは、なくなります</li>
+      </ul>
+      よく使う端末ごとに、1回ずつ作ってください。
+    </div>
     <div class="chips" role="group" aria-label="層を出す・消す"></div>
     <p class="jumps">この下に、層ごとの説明と出典、「なんで？」の小さな辞典があります　<button type="button" data-jump="d-layers">説明へ ↓</button><button type="button" data-jump="why">なんで？へ ↓</button></p>
     <p class="note names-note" hidden>地名の地球儀：文字が見やすいよう、出せる層をしぼっています（国境・地名、首都、赤道・日付変更線、プレート、地震、火山）。拡大すると県・州も出ます（一部の国）。ほかのモードに戻ると、前の状態に戻ります</p>
@@ -1362,7 +1374,7 @@ if (MapLayer) {
   const esc = t => String(t).replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
   const myRender = () => {
     const a = myLoad(), el = box.querySelector(".mysets");
-    el.innerHTML = `<span class="cap">自分のセット</span>` + a.map((m, i) => `<span class="myset"><button type="button" data-myset="${i}">${esc(m.name)}</button><button type="button" class="del" data-mydel="${i}" aria-label="${esc(m.name)}を消す">×</button></span>`).join("")
+    el.innerHTML = `<span class="cap">自分のセット</span><button type="button" class="help" data-myhelp="1" aria-expanded="${!box.querySelector(".myhelp").hidden}" aria-label="自分のセットの説明">？</button>` + a.map((m, i) => `<span class="myset"><button type="button" data-myset="${i}">${esc(m.name)}</button><button type="button" class="del" data-mydel="${i}" aria-label="${esc(m.name)}を消す">×</button></span>`).join("")
       + (a.length < MY_MAX ? `<button type="button" class="add" data-myadd="1">＋ いまの組み合わせを保存</button>` : "");
   };
 
@@ -1400,6 +1412,7 @@ if (MapLayer) {
     if (b.dataset.wlev) { const k = +b.dataset.wlev; setWindLevel(k).then(() => box.querySelectorAll("[data-wlev]").forEach(x => x.setAttribute("aria-pressed", String(x === b)))); return; }
     if (b.dataset.jump) { document.getElementById(b.dataset.jump)?.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" }); return; }
     if (b.dataset.preset) { applyPreset(PRESETS.find(P => P.key === b.dataset.preset)); return; }
+    if (b.dataset.myhelp) { const h = box.querySelector(".myhelp"); h.hidden = !h.hidden; b.setAttribute("aria-expanded", String(!h.hidden)); return; }
     if (b.dataset.myadd) { const a = myLoad(); const name = (window.prompt("セットの名前（あとで見て分かる名前）", `マイセット${a.length + 1}`) || "").trim().slice(0, 16); if (!name) return;
       a.push({ name, mode: curMode, on: CHIPS.filter(c => c.get()).map(c => c.key), view: MapLayer.view });
       if (!mySave(a)) window.alert("このブラウザでは保存できませんでした（プライベートブラウズなど）"); myRender(); return; }

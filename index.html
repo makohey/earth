@@ -54,6 +54,11 @@
   .mysets .myset{display:inline-flex;align-items:center}
   .mysets .myset button:first-child{border-radius:999px 0 0 999px;border-right:0;color:#ffd98a;border-color:rgba(255,217,138,.5);background:rgba(255,217,138,.06)}
   .mysets .myset .del{border-radius:0 999px 999px 0;padding:4px 9px;color:var(--ink-faint);border-color:rgba(255,217,138,.5);background:transparent}
+  .mysets .help{min-height:26px;width:26px;padding:0;border-radius:50%;border:1px solid var(--line);background:transparent;color:var(--ink-soft);font:inherit;font-size:12px;cursor:pointer}
+  .mysets .help[aria-expanded="true"]{color:var(--accent);border-color:var(--accent)}
+  .myhelp{font-size:12px;line-height:1.7;color:var(--ink-soft);border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:rgba(255,217,138,.04)}
+  .myhelp b{color:var(--ink);font-weight:500}
+  .myhelp ul{margin:6px 0;padding-left:1.2em}
   .mysets .add{border-style:dashed;color:var(--ink-soft);border-color:var(--line);background:transparent}
   .chips{display:flex;flex-wrap:wrap;gap:6px}
   .chips button{min-height:32px;padding:4px 11px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--ink-faint);font:inherit;font-size:12.5px;cursor:pointer}
