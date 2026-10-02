@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>地球の大きな風の帯</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+/* 小さな辞典の共通の見た目（地球儀と同じ夜の空）。上に南北の断面の動く図、下に風ごとのカード、最後に地球儀での見方 */
+:root{
+  --bg:#070b16; --panel:#0d1424; --line:#1f2a42; --ink:#e6ecf7; --soft:#a9b6cf; --faint:#6f7d99;
+  --east:#ff9947; --west:#4db8ff; --rise:#f4f7ff; --sink:#c4a6ff; --sea:#0f3a5c; --accent:#8fe3d4; --jet:#ffd27a;
+  --f-disp:"Zen Kaku Gothic New","Hiragino Sans","Noto Sans JP",sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{background:var(--bg);color:var(--ink)}
+body{margin:0;font-family:var(--f-disp);line-height:1.7;padding-inline:16px;padding-block:20px 40px}
+.wrap{max-width:860px;margin:0 auto;display:grid;gap:18px}
+.back a{color:var(--accent);font-size:13px;text-decoration:none}
+.back a:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+header h1{font-size:clamp(22px,4.6vw,30px);font-weight:700;letter-spacing:.02em;margin:0;text-wrap:balance}
+header p{margin:4px 0 0;color:var(--soft);font-size:14px;max-width:62ch}
+h2{font-size:17px;margin:6px 0 0;font-weight:700}
+.stage{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden;aspect-ratio:16/9;max-width:100%}
+canvas{display:block;width:100%;height:100%}
+.note{font-size:12px;color:var(--faint);margin:0}
+.cards{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
+.card{border:1px solid var(--line);border-radius:10px;padding:12px;min-width:0;display:grid;gap:4px}
+.card h3{margin:0;font-size:15px;display:flex;align-items:center;gap:8px}
+.card .sw{width:22px;height:3px;border-radius:2px;display:inline-block}
+.card dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:2px 10px;font-size:13px}
+.card dt{color:var(--faint)}
+.card dd{margin:0;color:var(--soft)}
+.card p{margin:4px 0 0;font-size:13px;color:var(--soft)}
+.tbl{overflow-x:auto}
+table{border-collapse:collapse;font-size:13px;min-width:520px;width:100%}
+th,td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
+th{color:var(--faint);font-weight:500}
+td{color:var(--soft)}
+.e{color:var(--east)} .w{color:var(--west)}
+ol.how{margin:0;padding-left:1.3em;font-size:14px;color:var(--soft);display:grid;gap:4px}
+.foot{font-size:12px;color:var(--faint)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav class="back"><a href="../">← 地球儀にもどる</a></nav>
+  <header>
+    <h1>地球の大きな風の帯</h1>
+    <p>地球には、いつもだいたい同じ向きに吹いている大きな風の帯がある。赤道から極まで、北半球と南半球に3つずつ。暖かい赤道で空気がのぼり、冷たい所で沈む「空気の大きな輪」が、その帯を作っている。</p>
+  </header>
+
+  <div class="stage"><canvas id="cv" aria-label="南極から北極までの断面で、空気の大きな輪が回るアニメーション"></canvas></div>
+  <p class="note">南極から北極までを横に切った断面の模式図です。高さは大きく強調しています（本物の空気の層は15kmほどしかありません）。地上の矢印は、その帯で風が吹く東西の向きです。赤道（雲が多い帯）と60°でのぼり、30°（晴れて乾く。砂漠が多い）と極で沈みます。白い線＝のぼる空気、紫の線＝沈む空気。</p>
+
+  <h2>4つの風</h2>
+  <div class="cards">
+    <section class="card">
+      <h3><span class="sw" style="background:var(--west)"></span>貿易風</h3>
+      <dl><dt>場所</dt><dd>赤道〜緯度30°くらい</dd><dt>高さ</dt><dd>地上〜1.5〜2km（薄い層）</dd><dt>向き</dt><dd class="w">東から西へ（北半球は北東から、南半球は南東から）</dd></dl>
+      <p>緯度30°で沈んだ空気が、赤道へ戻ってくる流れ。昔、帆船が貿易に使ったのでこの名前。上には暖かい空気の「ふた」があり、それより上へは行けない。弱まると、エルニーニョにつながる。</p>
+    </section>
+    <section class="card">
+      <h3><span class="sw" style="background:var(--east)"></span>偏西風</h3>
+      <dl><dt>場所</dt><dd>緯度30〜60°くらい（日本はここ）</dd><dt>高さ</dt><dd>地上〜上空10km以上（分厚い層）</dd><dt>向き</dt><dd class="e">西から東へ</dd></dl>
+      <p>上に行くほど強くなる。大きく波打ちながら地球を回り、低気圧や高気圧を東へ運ぶ。日本の天気が西から変わっていくのはこのため。台風もここに乗ると東へ向きを変える。</p>
+    </section>
+    <section class="card">
+      <h3><span class="sw" style="background:var(--jet)"></span>ジェット気流</h3>
+      <dl><dt>場所</dt><dd>偏西風の中（緯度30°と60°のあたり）</dd><dt>高さ</dt><dd>約10km前後</dd><dt>向き</dt><dd class="e">西から東へ、とても速い</dd></dl>
+      <p>偏西風の中でいちばん速い筋。秒速50mを超えることもある。冬の日本の上空は世界でも特に強い。東へ向かう飛行機は乗って早く着き、西へ向かう飛行機は避けて飛ぶ。</p>
+    </section>
+    <section class="card">
+      <h3><span class="sw" style="background:var(--west)"></span>極東風</h3>
+      <dl><dt>場所</dt><dd>緯度60°〜極</dd><dt>高さ</dt><dd>地上近くの薄い層</dd><dt>向き</dt><dd class="w">東から西へ</dd></dl>
+      <p>極で冷えて沈んだ重い空気が、外へ流れ出す風。弱くて乱れやすい。偏西風とぶつかる緯度60°あたりでは、低気圧ができやすい。</p>
+    </section>
+  </div>
+
+  <h2>空気の大きな輪（3つずつ）</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>輪の名前</th><th>範囲</th><th>のぼる所</th><th>沈む所</th><th>地上の風</th></tr></thead>
+    <tbody>
+      <tr><td>ハドレー循環</td><td>赤道〜30°</td><td>赤道（雲が多い帯）</td><td>30°（晴れて乾く。砂漠が多い）</td><td class="w">貿易風</td></tr>
+      <tr><td>フェレル循環</td><td>30°〜60°</td><td>60°</td><td>30°</td><td class="e">偏西風</td></tr>
+      <tr><td>極循環</td><td>60°〜極</td><td>60°</td><td>極</td><td class="w">極東風</td></tr>
+    </tbody>
+  </table></div>
+  <p class="note">風が東西に曲がるのは、地球が回っているから（赤道へ向かう風は西へ、極へ向かう風は東へ曲げられる）。</p>
+
+  <h2>地球儀で見てみる</h2>
+  <ol class="how">
+    <li>歯車を開いて、AIR の枠の「風の名前」から1つ押す。その風が見やすい高さになり、目安の帯だけが明るくなる</li>
+    <li>線の色は向き：<span class="e">橙＝東へ吹く</span>、<span class="w">青＝西へ吹く</span></li>
+    <li>「偏西風」を押してから「風の高さ」を約10kmにすると、上ほどまっすぐ速くなるのが見える</li>
+    <li>「東西の色分け」を付けたまま、赤道のあたりで「地上」と「約10km」を切り替えると、上空では向きが逆になっている所がある（輪の上半分）</li>
+  </ol>
+
+  <p class="foot">この図は「眺めるための地球儀」の小さな辞典の1ページです。しくみの模式図で、観測データではありません。帯の緯度は目安で、季節や日によって動きます。</p>
+</div>
+
+<script>
+(() => {
+  const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const C = { east: css("--east"), west: css("--west"), rise: css("--rise"), sink: css("--sink"), sea: css("--sea"), faint: css("--faint"), panel: css("--panel"), jet: css("--jet"), ink: css("--ink") };
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let W = 0, H = 0;
+  const resize = () => { const d = Math.min(2, devicePixelRatio || 1), r = cv.getBoundingClientRect(); W = r.width; H = r.height; cv.width = W * d; cv.height = H * d; ctx.setTransform(d, 0, 0, d, 0, 0); };
+  new ResizeObserver(resize).observe(cv); resize();
+  // 緯度 → 横位置、高さ（0〜1）→ 縦位置
+  const X = lat => 20 + (lat + 90) / 180 * (W - 40), ground = () => H * .8, top = () => H * .14, Y = h => ground() - (ground() - top()) * h;
+  // 6つの輪（南から北へ）。dir=1 は「南の端でのぼり北の端で沈む」…ではなく、輪ごとの回る向き
+  const cells = [[-90, -60, 1], [-60, -30, -1], [-30, 0, 1], [0, 30, -1], [30, 60, 1], [60, 90, -1]];   /* 赤道と60°でのぼり、30°と極で沈む向き */
+  // 輪の中の粒：輪の周りを長方形に近い楕円で回る
+  const parts = [];
+  cells.forEach(([a, b, d], ci) => { for (let k = 0; k < 26; k++) parts.push({ ci, t: Math.random(), v: .9 + Math.random() * .3 }); });
+  function pos(ci, t) {
+    const [a, b, d] = cells[ci], cx = (a + b) / 2, hw = (b - a) / 2 * .82, cy = .5, hh = .36;
+    const ang = (d > 0 ? 1 : -1) * t * Math.PI * 2;
+    // 角を少し四角く（楕円をつぶす）
+    const c = Math.cos(ang), s = Math.sin(ang), sq = v => Math.sign(v) * Math.pow(Math.abs(v), .6);
+    return [cx + hw * sq(c), cy + hh * sq(s)];
+  }
+  function label(t, x, y, col, al = "center", size = 12) { ctx.font = `500 ${Math.max(10, Math.min(size, W / 55))}px ${css("--f-disp")}`; ctx.textAlign = al; ctx.lineWidth = 4; ctx.strokeStyle = "rgba(7,11,22,.85)"; ctx.strokeText(t, x, y); ctx.fillStyle = col; ctx.fillText(t, x, y); }
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(.05, (now - last) / 1000) * (reduce ? .25 : 1); last = now;
+    ctx.fillStyle = C.panel; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = C.sea; ctx.fillRect(0, ground(), W, H - ground());
+    // 緯度の目盛り
+    for (const lat of [-90, -60, -30, 0, 30, 60, 90]) { ctx.strokeStyle = "rgba(111,125,153,.25)"; ctx.setLineDash([3, 5]); ctx.beginPath(); ctx.moveTo(X(lat), top() - 6); ctx.lineTo(X(lat), ground()); ctx.stroke(); ctx.setLineDash([]);
+      label(lat === 0 ? "赤道" : `${Math.abs(lat)}°${lat > 0 ? "N" : "S"}`, X(lat), H * .97, C.faint, "center", 11); }
+    // ジェット気流（上空、30°と60°の境目の上）
+    for (const lat of [-30, -60, 30, 60]) { const g = ctx.createRadialGradient(X(lat), Y(.93), 1, X(lat), Y(.93), W * .03); g.addColorStop(0, "rgba(255,210,122,.9)"); g.addColorStop(1, "rgba(255,210,122,0)"); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(X(lat), Y(.93), W * .03, 0, Math.PI * 2); ctx.fill(); }
+    label("ジェット気流", (X(30) + X(60)) / 2, Y(.93) + 4, C.jet, "center", 11);
+    // 粒
+    for (const p of parts) { p.t = (p.t + dt * .05 * p.v) % 1; const [la, h] = pos(p.ci, p.t), [la2, h2] = pos(p.ci, (p.t + .985) % 1);
+      const up = h > h2 + .002, down = h < h2 - .002; ctx.strokeStyle = up ? C.rise : down ? C.sink : "rgba(230,236,247,.6)"; ctx.lineWidth = 1.6; ctx.globalAlpha = .85;
+      ctx.beginPath(); ctx.moveTo(X(la2), Y(h2)); ctx.lineTo(X(la), Y(h)); ctx.stroke(); }
+    ctx.globalAlpha = 1;
+    // 地上の風の向き（東西）
+    const bands = [[-75, "極東風", -1], [-45, "偏西風", 1], [-15, "貿易風", -1], [15, "貿易風", -1], [45, "偏西風", 1], [75, "極東風", -1]];
+    for (const [lat, name, d] of bands) { const col = d > 0 ? C.east : C.west; label(`${d > 0 ? "→" : "←"} ${name}`, X(lat), ground() + 18, col, "center", 12); }
+    for (const lat of [0, 60, -60]) label("↑のぼる", X(lat), top() - 4, C.rise, "center", 11);
+    for (const lat of [30, -30]) label("↓沈む", X(lat), top() - 4, C.sink, "center", 11);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

@@ -1298,7 +1298,7 @@ document.getElementById("d-layers").innerHTML = SCALAR_LAYERS.map(l => layerBloc
   + (ON ? `<div class="layer"><label>${LAND_ICE.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${LAND_ICE.kind}</span></label>
       <div class="sub">${LAND_ICE.note}<br>出典：${LAND_ICE.credit}</div></div>` : "")
   + `<div class="layer" id="why"><label>なんで？（小さな辞典）</label>
-      <div class="sub"><a href="learn/typhoon.html" style="color:var(--accent)">台風の風と雲のしくみ</a>：地上で吸い込み、目の壁でのぼり、上空で吹き出し、目で下がる（動く模式図）</div></div>`
+      <div class="sub"><a href="learn/typhoon.html" style="color:var(--accent)">台風の風と雲のしくみ</a>：地上で吸い込み、目の壁でのぼり、上空で吹き出し、目で下がる（動く模式図）<br><a href="learn/winds.html" style="color:var(--accent)">地球の大きな風の帯</a>：貿易風・偏西風・ジェット気流・極東風と、それを作る空気の大きな輪</div></div>`
   + (StateLayer ? `<div class="layer"><label>${StateLayer.info.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${StateLayer.info.kind}</span></label>
       <div class="sub">${StateLayer.info.note}<br>出典：${StateLayer.info.credit}</div></div>` : "")
   + (CapitalLayer ? `<div class="layer"><label>${CapitalLayer.info.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${CapitalLayer.info.kind}</span></label>
@@ -1422,7 +1422,7 @@ if (MapLayer) {
     const wc = CHIPS.find(c => c.key === "wind"); if (wc && !wc.get()) wc.set(true);
     if (Catalog.has(WIND_LEVELS[W.lev].id)) { await setWindLevel(W.lev); box.querySelectorAll("[data-wlev]").forEach(x => x.setAttribute("aria-pressed", String(+x.dataset.wlev === W.lev))); }
     setDir(true); VisualParticles.setBand(W.band, W.jet || 0);
-    if (nt) { nt.textContent = W.note + "。帯の範囲は目安で、実際の風は季節や日によってはみ出します"; nt.hidden = false; }
+    if (nt) { nt.innerHTML = W.note + `。帯の範囲は目安で、実際の風は季節や日によってはみ出します　<a href="learn/winds.html" style="color:var(--accent)">辞典：地球の大きな風の帯</a>`; nt.hidden = false; }
     syncChips();
   };
   const syncCounts = () => GROUPS.forEach(G => { const el = box.querySelector(`[data-cnt="${G.key}"]`); if (!el) return; const n = G.keys.filter(k => { const c = CHIPS.find(c => c.key === k); return c && c.get(); }).length; el.textContent = n ? `${n}` : ""; });
