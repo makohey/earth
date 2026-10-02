@@ -11,6 +11,7 @@
 """
 import json, os, sys
 
+RENAME = {"Kyiv": "キーウ（キエフ）"}   # 日本政府は2022年から「キーウ」（ウクライナ語に基づく）。前の呼び方も併記
 DISPUTED_EXTRA = {"Jerusalem"}          # 首都とするかどうか、国によって見方が分かれる（日本は大使館をテルアビブに置いている）
 d = json.load(open(sys.argv[1], encoding="utf-8"))
 rows = []
@@ -22,7 +23,7 @@ for f in d["features"]:
         continue
     views = {p[k] for k in p if k.startswith("FCLASS_") and p[k]} | {p.get("FEATURECLA")}
     disputed = len({v == "Admin-0 capital" for v in views}) > 1 or p.get("NAME") in DISPUTED_EXTRA
-    rows.append([p.get("NAME_JA") or p.get("NAME"), round(p["LATITUDE"], 3), round(p["LONGITUDE"], 3), p.get("ADM0NAME"),
+    rows.append([RENAME.get(p.get("NAME")) or p.get("NAME_JA") or p.get("NAME"), round(p["LATITUDE"], 3), round(p["LONGITUDE"], 3), p.get("ADM0NAME"),
                  int(fact), int(jp), int(disputed), int(p.get("LABELRANK") or 5), int(p.get("POP_MAX") or 0)])
 out = {"source": "Natural Earth 1:50m populated places（パブリックドメイン）", "fields": ["ja", "lat", "lon", "country", "fact", "jp", "disputed", "rank", "pop"], "rows": rows}
 path = os.path.join(os.path.dirname(__file__), "..", "data", "map", "capitals.json")

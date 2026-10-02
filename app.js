@@ -663,6 +663,43 @@ async function createCapitalLayer() {
     },
   };
 }
+
+/* ===== 県・州（Natural Earth admin-1）：「地名」モードで拡大したときだけ読み込んで出す =====
+   見方が分かれる地域を含む国（ロシア・ウクライナ・中国・インドなど）は入れていない（保留） */
+const STATE_COUNTRIES_JA = { JPN: "日本", AUS: "オーストラリア", USA: "アメリカ", CAN: "カナダ", BRA: "ブラジル", MEX: "メキシコ", DEU: "ドイツ", NZL: "ニュージーランド", ZAF: "南アフリカ" };
+let NamesMode = false;
+function createStateLayer() {
+  const group = new THREE.Group(); group.visible = false; group.renderOrder = 1.6; scene.add(group);
+  let loaded = null, loading = false, labels = [];
+  const load = async () => { loading = true;
+    const d = await getJSON("data/map/states.json"), pos = [], q = [0, 0, 0];
+    for (const l of d.lines) for (let i = 2; i < l.length; i += 2) { toXYZ(l[i - 1], l[i - 2], 1.0018, q, 0); pos.push(...q); toXYZ(l[i + 1], l[i], 1.0018, q, 0); pos.push(...q); }
+    const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+    group.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0xd8c9a8, transparent: true, opacity: 0.38, depthWrite: false })));
+    labels = d.labels.sort((a, b) => a[3] - b[3]).map(([ja, la, lo, rank]) => { const sp = makeTextSprite(ja, "rgba(222,212,190,0.9)", 400, 10.5); toXYZ(la, lo, 1.007, q, 0); sp.position.set(...q); sp.userData.rank = rank; sp.visible = false; group.add(sp); return sp; });
+    loaded = d; };
+  const cam = new THREE.Vector3(), wp = new THREE.Vector3(), placed = [];
+  return {
+    info: { title: "県・州", kind: "地図（線と名前）", credit: "Natural Earth 1:10m admin-1（パブリックドメイン）",
+      note: `「地名」モードで拡大すると出ます。いま入っている国：${Object.values(STATE_COUNTRIES_JA).join("・")}。見方が分かれる地域を含む国（ロシア・ウクライナ・中国・インドなど）は、いまは入れていません` },
+    tick() {
+      const dist = camera.position.length(), want = NamesMode && dist < 3.8;
+      if (want && !loaded && !loading) load().catch(e => console.warn("県・州を読めませんでした", e));
+      group.visible = want && !!loaded; if (!group.visible) return;
+      const h = stage.clientHeight || 800, w = stage.clientWidth || 400, k = 2 * Math.tan(camera.fov / 2 * D2R) / h;
+      const maxRank = dist < 1.9 ? 99 : dist < 2.4 ? 5 : dist < 3.0 ? 3 : -1;
+      cam.copy(camera.position).normalize(); placed.length = 0;
+      for (const sp of labels) {
+        wp.copy(sp.position).normalize(); let ok = sp.userData.rank <= maxRank && wp.dot(cam) > 0.35;
+        if (ok) { wp.copy(sp.position).project(camera); const x = (wp.x + 1) / 2 * w, y = (1 - wp.y) / 2 * h, hw = sp.userData.px * sp.userData.aspect / 2 + 4, hh = sp.userData.px / 2 + 3;
+          ok = !placed.some(b => Math.abs(b[0] - x) < b[2] + hw && Math.abs(b[1] - y) < b[3] + hh); if (ok) placed.push([x, y, hw, hh]); }   /* 重なる名前は出さない（大きい州から順に） */
+        sp.visible = ok; if (ok) { const sc = sp.userData.px * k; sp.scale.set(sc * sp.userData.aspect, sc, 1); }
+      }
+    },
+  };
+}
+let StateLayer = null;
+if (ON && MapLayer) { try { StateLayer = createStateLayer(); } catch (e) { console.warn("県・州を出せませんでした", e); } }
 let CapitalLayer = null;
 if (ON && MapLayer) { try { CapitalLayer = await createCapitalLayer(); } catch (e) { console.warn("首都を読めませんでした", e); } }
 
@@ -1229,6 +1266,8 @@ document.getElementById("d-layers").innerHTML = SCALAR_LAYERS.map(l => layerBloc
       <div class="sub">${NIGHT_LIGHTS.note}<br>出典：${NIGHT_LIGHTS.credit}</div></div>` : "")
   + (ON ? `<div class="layer"><label>${LAND_ICE.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${LAND_ICE.kind}</span></label>
       <div class="sub">${LAND_ICE.note}<br>出典：${LAND_ICE.credit}</div></div>` : "")
+  + (StateLayer ? `<div class="layer"><label>${StateLayer.info.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${StateLayer.info.kind}</span></label>
+      <div class="sub">${StateLayer.info.note}<br>出典：${StateLayer.info.credit}</div></div>` : "")
   + (CapitalLayer ? `<div class="layer"><label>${CapitalLayer.info.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${CapitalLayer.info.kind}</span></label>
       <div class="sub">${CapitalLayer.info.note}<br>出典：${CapitalLayer.info.credit}</div></div>` : "")
   + (GuideLayer ? `<div class="layer"><label>${GuideLayer.info.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${GuideLayer.info.kind}</span></label>
@@ -1251,7 +1290,7 @@ if (MapLayer) {
   box.innerHTML = `<div class="seg" role="group" aria-label="見せ方">${Object.entries(MODES).map(([k, m]) => `<button type="button" data-mode="${k}">${m.label}</button>`).join("")}</div>
     <div class="presets" role="group" aria-label="見方のプリセット"><span class="cap">見方のセット</span></div>
     <div class="chips" role="group" aria-label="層を出す・消す"></div>
-    <p class="note names-note" hidden>地名の地球儀：文字が見やすいよう、出せる層をしぼっています（国境・地名、首都、赤道・日付変更線、プレート、地震、火山）。ほかのモードに戻ると、前の状態に戻ります</p>
+    <p class="note names-note" hidden>地名の地球儀：文字が見やすいよう、出せる層をしぼっています（国境・地名、首都、赤道・日付変更線、プレート、地震、火山）。拡大すると県・州も出ます（一部の国）。ほかのモードに戻ると、前の状態に戻ります</p>
     ${WIND_LEVELS.slice(1).some(L => Catalog.has(L.id)) ? `<div class="windh"><div class="seg small" role="group" aria-label="風の高さ">${WIND_LEVELS.filter(L => Catalog.has(L.id)).map(L => `<button type="button" data-wlev="${WIND_LEVELS.indexOf(L)}" aria-pressed="${L.id === "wind-10m"}">${L.label}</button>`).join("")}</div>
       <p class="note">風の高さ：上に行くほど地球規模の流れ（偏西風・ジェット気流）が見えます。上空の線は速さに合わせて色の幅を変えています</p></div>` : ""}
     <div class="viewbox"><div class="seg small" role="group" aria-label="国境の見方">${Object.entries(MapLayer.views).map(([k, t]) => `<button type="button" data-view="${k}">${t}</button>`).join("")}</div>
@@ -1319,7 +1358,7 @@ if (MapLayer) {
     box.querySelectorAll("[data-preset]").forEach(b => { b.disabled = !!m.names; });
     const wh = box.querySelector(".windh"); if (wh) wh.hidden = !!m.names;
     box.querySelector(".names-note").hidden = !m.names;
-    curMode = k;
+    curMode = k; NamesMode = !!m.names;
     syncChips();
     updateChip();
   };
@@ -1408,7 +1447,7 @@ function loop(now) {
   const dt = Math.min(now - last, 100); last = now;
   frames.push(dt); if (frames.length > 120) frames.shift();
   if (VisualParticles.visible) VisualParticles.step(Math.min(dt / 16.667, 3));
-  MapLayer?.tick(); CapitalLayer?.tick(); SkyLayer?.tick(); GuideLayer?.tick(); AuroraLayer?.tick(now); ShakeRipples?.tick(now, !!FEATURE_LAYERS.find(l => l.id === "quakes")?.visible);
+  MapLayer?.tick(); CapitalLayer?.tick(); StateLayer?.tick(); SkyLayer?.tick(); GuideLayer?.tick(); AuroraLayer?.tick(now); ShakeRipples?.tick(now, !!FEATURE_LAYERS.find(l => l.id === "quakes")?.visible);
   Spin.tick(); controls.update();
   for (const l of FEATURE_LAYERS) l.tick(camera.position.length());
   renderer.render(scene, camera);
