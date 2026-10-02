@@ -631,7 +631,7 @@ if (ON) { try { MapLayer = await createMapLayer(); MapLayer.view = "jp"; MapLaye
 /* ===== 首都（Natural Earth、パブリックドメイン）：★と名前。国境と同じ「見方」に合わせる。見方が分かれる首都は白抜きの☆ ===== */
 async function createCapitalLayer() {
   const d = await getJSON("data/map/capitals.json"), F = Object.fromEntries(d.fields.map((n, i) => [n, i]));
-  const rows = d.rows.map(r => ({ ja: r[F.ja], lat: r[F.lat], lon: r[F.lon], country: r[F.country], fact: !!r[F.fact], jp: !!r[F.jp], disputed: !!r[F.disputed], rank: r[F.rank] }));
+  const rows = d.rows.map(r => ({ ja: r[F.ja], lat: r[F.lat], lon: r[F.lon], country: r[F.country], fact: !!r[F.fact], jp: !!r[F.jp], disputed: !!r[F.disputed], rank: Math.min(r[F.rank], r[F.pop] >= 4e6 ? 1 : r[F.pop] >= 1.5e6 ? 2 : r[F.pop] >= 4e5 ? 3 : 5) }));   /* 名前を出す順番：Natural Earth の順位と人口の、早いほう（ロンドンやキエフが遅れて出ないように） */
   const group = new THREE.Group(); group.visible = false; group.renderOrder = 4; scene.add(group);
   const pos = new Float32Array(rows.length * 3), hol = new Float32Array(rows.length), show = new Float32Array(rows.length);
   rows.forEach((c, i) => { toXYZ(c.lat, c.lon, 1.004, pos, i * 3); hol[i] = c.disputed ? 1 : 0; });
