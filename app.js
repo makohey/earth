@@ -575,7 +575,7 @@ async function createSkyLayer() {
     fragmentShader: `uniform sampler2D uTex; varying vec3 vPos; varying float vDay; const float PI = 3.141592653589793;
       void main(){ vec3 n = normalize(vPos); float lat = asin(clamp(n.y,-1.0,1.0)), lon = atan(-n.z, n.x);
         vec4 c = texture2D(uTex, vec2((lon+PI)/(2.0*PI), (lat+PI*0.5)/PI)); gl_FragColor = vec4(c.rgb, c.a * mix(1.0, 0.1, vDay)); }` }));
-  mw.renderOrder = 5.5; frame.add(mw);
+  mw.renderOrder = 5.5; frame.add(mw); const milky = [mw];   /* 天の川は星座と別に出し入れできる */
   // 天の川の粒：帯の真ん中ほど密に、細かい光の粒を散らす（星表の星ではなく、見た目のための粒）
   { const gp = [], gs = []; let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
     const gauss = () => Math.sqrt(-2 * Math.log(rnd() + 1e-9)) * Math.cos(2 * Math.PI * rnd());
@@ -593,7 +593,7 @@ async function createSkyLayer() {
     const grains = new THREE.Points(gg, new THREE.ShaderMaterial({ uniforms: { uSun: { value: sunDir }, uPR: { value: renderer.getPixelRatio() } }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
       vertexShader: `attribute float aSize; uniform float uPR; ${dayFade} void main(){ vec4 wp = modelMatrix * vec4(position,1.0); vDay = dayOf(wp.xyz); gl_Position = projectionMatrix * viewMatrix * wp; gl_PointSize = aSize * uPR; }`,
       fragmentShader: `varying float vDay; void main(){ float r = length(gl_PointCoord - 0.5); if (r > 0.5) discard; float a = smoothstep(0.5, 0.0, r) * mix(0.55, 0.06, vDay); gl_FragColor = vec4(vec3(0.82, 0.87, 1.0) * a, 1.0); }` }));
-    grains.renderOrder = 5.6; frame.add(grains); }
+    grains.renderOrder = 5.6; frame.add(grains); milky.push(grains); }
   // 星座名（大きい星座から）と、いまの時期の流星群の放射点
   const labels = [];
   for (const [ja, ra, dec, rank] of d.names) { if (rank > 2) continue; const sp = makeTextSprite(ja, "rgba(170,196,255,0.9)", 400, 11.5); toXYZ(dec, ra, R + 0.004, tmp, 0); sp.position.set(...tmp); sp.userData.rank = rank; frame.add(sp); labels.push(sp); }
@@ -602,10 +602,14 @@ async function createSkyLayer() {
   for (const s of active) {
     const sp = makeTextSprite(`✦ ${s.name}（放射点・極大 ${s.peak}）`, "rgba(255,214,150,0.95)", 500, 12.5); toXYZ(s.dec, s.ra, R + 0.006, tmp, 0); sp.position.set(...tmp); sp.userData.rank = 0; frame.add(sp); labels.push(sp); radiants.push(s);
   }
+  let skyOn = false, milkyOn = false;
+  const sync = () => { frame.visible = skyOn || milkyOn; stars.visible = lines.visible = skyOn; for (const o of milky) o.visible = milkyOn; if (!skyOn) for (const sp of labels) sp.visible = false; };
   const cam = new THREE.Vector3(), wp = new THREE.Vector3();
   return {
     info: SKY_INFO, radiants,
-    set visible(v) { frame.visible = v; }, get visible() { return frame.visible; },
+    /* 星座（星・線・名前・流星群）と天の川を分けて出し入れする。どちらかが出ていれば天の枠を回す */
+    set visible(v) { skyOn = v; sync(); }, get visible() { return skyOn; },
+    set milky(v) { milkyOn = v; sync(); }, get milky() { return milkyOn; },
     tick() {
       if (!frame.visible) return;
       frame.rotation.y = -gmstDeg(Clock.now()) * D2R;               // 経度＝赤経−恒星時
@@ -613,7 +617,7 @@ async function createSkyLayer() {
       cam.copy(camera.position).normalize();
       for (const sp of labels) {
         wp.copy(sp.position).applyMatrix4(frame.matrixWorld).normalize();
-        const show = sp.userData.rank <= maxRank && wp.dot(cam) > 0.3;
+        const show = skyOn && sp.userData.rank <= maxRank && wp.dot(cam) > 0.3;
         sp.visible = show; if (show) { const s = sp.userData.px / h * 2 * Math.tan(camera.fov / 2 * D2R); sp.scale.set(s * sp.userData.aspect, s, 1); }
       }
     },
@@ -1224,11 +1228,12 @@ if (MapLayer) {
     { key: "volcanoes", label: "火山", get: () => layerById("volcanoes")?.visible, set: v => setLayer("volcanoes", v) },
     { key: "sats", label: "人工衛星", get: () => layerById("sats")?.visible, set: v => setLayer("sats", v) },
     { key: "aurora", label: "オーロラ帯", get: () => AuroraLayer?.visible, set: v => { if (AuroraLayer) { AuroraLayer.visible = v; AuroraLayer.userOn = v; } } },
+    { key: "milky", label: "天の川", get: () => SkyLayer?.milky, set: v => { if (SkyLayer) SkyLayer.milky = v; } },
     { key: "plates", label: "プレート", get: () => PlateLayer?.visible, set: v => { if (PlateLayer) { PlateLayer.visible = v; PlateLayer.userOn = v; const cb = document.getElementById("t-plates"); if (cb) cb.checked = v; } } },
     { key: "guide", label: "赤道・日付変更線", get: () => GuideLayer?.visible, set: v => { if (GuideLayer) { GuideLayer.visible = v; GuideLayer.userOn = v; } } },
     { key: "map", label: "国境・地名", get: () => MapLayer.visible, set: v => { MapLayer.visible = v; box.querySelector(".viewbox").hidden = !v; } },
-    { key: "sky", label: "✦ 夜空", get: () => SkyLayer?.visible, set: v => { if (SkyLayer) SkyLayer.visible = v; } },
-  ].filter(c => c.key === "wind" || c.key === "map" || (c.key === "sky" ? !!SkyLayer : c.key === "guide" ? !!GuideLayer : c.key === "aurora" ? !!AuroraLayer : c.key === "plates" ? !!PlateLayer : !!layerById(c.key)));
+    { key: "sky", label: "✦ 星座", get: () => SkyLayer?.visible, set: v => { if (SkyLayer) SkyLayer.visible = v; } },
+  ].filter(c => c.key === "wind" || c.key === "map" || ((c.key === "sky" || c.key === "milky") ? !!SkyLayer : c.key === "guide" ? !!GuideLayer : c.key === "aurora" ? !!AuroraLayer : c.key === "plates" ? !!PlateLayer : !!layerById(c.key)));
   box.querySelector(".chips").innerHTML = CHIPS.map(c => `<button type="button" data-chip="${c.key}">${c.label}</button>`).join("");
   var syncChips = () => box.querySelectorAll("[data-chip]").forEach(b => b.setAttribute("aria-pressed", String(!!CHIPS.find(c => c.key === b.dataset.chip).get())));
   const setMode = k => {
