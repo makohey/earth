@@ -1186,7 +1186,7 @@ const VisualParticles = (() => {
 const CurrentLayer = (() => {
   if (!Catalog.has("currents")) return null;
   const meta = Catalog.meta("currents"), g = Catalog.gridInfo("currents");
-  const N = window.innerWidth < 700 ? 2400 : 4500, SLOTS = 32, STEP = 0.08, R = 1.0045;
+  const N = window.innerWidth < 700 ? 2400 : 4500, SLOTS = 32, STEP = 0.1, R = 1.0045;
   let U = null, V = null, T = null, cells = null, ready = false, on = false, built = false, onChange = null;
   let lines = null, mat = null, attr = null, frame = 0;
   const lat = new Float32Array(N), lon = new Float32Array(N), age = new Float32Array(N), life = new Float32Array(N);
@@ -1222,7 +1222,7 @@ const CurrentLayer = (() => {
       if (Math.random() > Math.cos(la * D2R)) continue;                 /* 面積に合わせる（高緯度に偏らないよう） */
       lat[i] = la; lon[i] = g.lo1 + ((c % g.nx) + Math.random() - 0.5) * g.dx; break;
     }
-    age[i] = 0; life[i] = 120 + Math.random() * 160;
+    age[i] = 0; life[i] = 220 + Math.random() * 280;
   }
   /* 帯（四角）で描く：区間ごとに4頂点。始点・終点・左右・時刻・水温・速さ */
   function build() {
@@ -1276,25 +1276,34 @@ const CurrentLayer = (() => {
         }`,
     });
     lines = new THREE.Mesh(geo, mat); lines.frustumCulled = false; lines.renderOrder = 2; lines.visible = false; scene.add(lines);
-    for (let i = 0; i < N; i++) { spawn(i); age[i] = Math.random() * life[i]; }
+    for (let i = 0; i < N; i++) { spawn(i); age[i] = Math.random() * life[i]; pLat[i] = lat[i]; pLon[i] = lon[i]; }
     built = true;
   }
+  /* 尻尾を長くつなげる：粒は毎コマ動かし、跡（区間）は KEEP コマに1回だけ書く。区間の数（重さ）は同じまま、尻尾の長さが KEEP 倍に */
+  const KEEP = 2, pLat = new Float32Array(N), pLon = new Float32Array(N), dead = new Uint8Array(N);
+  let sub = 0;
   const tA = [0,0,0], tB = [0,0,0];
   function step(dtScale) {
-    frame++;
-    const slot = frame % SLOTS, q0 = slot * N, A = attr.a.array, B = attr.b.array, Bi = attr.birth.array, Te = attr.temp.array, Sp = attr.spd.array;
     for (let i = 0; i < N; i++) {
-      const s0 = sample(lon[i], lat[i]), v4 = (q0 + i) * 4;
-      if (!s0) { spawn(i); for (let k = 0; k < 4; k++) Bi[v4 + k] = -1e6; continue; }
-      const [u, v, t] = s0, sp = Math.hypot(u, v);
-      toXYZ(lat[i], lon[i], R, tA, 0);
+      if (dead[i]) continue;
+      const s0 = sample(lon[i], lat[i]);
+      if (!s0) { dead[i] = 1; continue; }
       const c = Math.max(0.15, Math.cos(lat[i] * D2R));
-      lat[i] += v * STEP * dtScale; lon[i] += u * STEP * dtScale / c;
+      lat[i] += s0[1] * STEP * dtScale; lon[i] += s0[0] * STEP * dtScale / c;
       if (lon[i] > 180) lon[i] -= 360; else if (lon[i] < -180) lon[i] += 360;
       age[i] += dtScale;
-      if (age[i] > life[i] || Math.abs(lat[i]) > 84 || sp < 0.01) { spawn(i); for (let k = 0; k < 4; k++) Bi[v4 + k] = -1e6; continue; }
-      toXYZ(lat[i], lon[i], R, tB, 0);
-      for (let k = 0; k < 4; k++) { const p = (v4 + k) * 3; A[p] = tA[0]; A[p+1] = tA[1]; A[p+2] = tA[2]; B[p] = tB[0]; B[p+1] = tB[1]; B[p+2] = tB[2]; Bi[v4 + k] = frame; Te[v4 + k] = t; Sp[v4 + k] = sp; }
+      if (age[i] > life[i] || Math.abs(lat[i]) > 84 || Math.hypot(s0[0], s0[1]) < 0.01) dead[i] = 1;
+    }
+    if (++sub < KEEP) return;
+    sub = 0; frame++;
+    const slot = frame % SLOTS, q0 = slot * N, A = attr.a.array, B = attr.b.array, Bi = attr.birth.array, Te = attr.temp.array, Sp = attr.spd.array;
+    for (let i = 0; i < N; i++) {
+      const v4 = (q0 + i) * 4, s1 = dead[i] ? null : sample(lon[i], lat[i]);
+      if (!s1) { spawn(i); dead[i] = 0; pLat[i] = lat[i]; pLon[i] = lon[i]; for (let k = 0; k < 4; k++) Bi[v4 + k] = -1e6; continue; }
+      toXYZ(pLat[i], pLon[i], R, tA, 0); toXYZ(lat[i], lon[i], R, tB, 0);
+      const sp = Math.hypot(s1[0], s1[1]);
+      for (let k = 0; k < 4; k++) { const p = (v4 + k) * 3; A[p] = tA[0]; A[p+1] = tA[1]; A[p+2] = tA[2]; B[p] = tB[0]; B[p+1] = tB[1]; B[p+2] = tB[2]; Bi[v4 + k] = frame; Te[v4 + k] = s1[2]; Sp[v4 + k] = sp; }
+      pLat[i] = lat[i]; pLon[i] = lon[i];
     }
     const off = q0 * 4, cnt = N * 4;
     for (const [k, at] of Object.entries(attr)) { const w = k === "a" || k === "b" ? 3 : 1; at.updateRange.offset = off * w; at.updateRange.count = cnt * w; at.needsUpdate = true; }
