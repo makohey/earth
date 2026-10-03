@@ -1179,6 +1179,141 @@ const VisualParticles = (() => {
     setBand(b, jet = 0) { U.uBandOn.value = b ? 1 : 0; if (b) U.uBand.value.set(b[0], b[1]); U.uJet.value = jet; } };
 })();
 
+/* ===== 海流（いつもの流れ）：NOAA AOML 漂流ブイの月平均。風の線とは別の見せ方 =====
+   ・線の色＝水温（同じブイの記録の平年値）。暖流は赤〜橙、寒流は青で、海が熱を運ぶのが見える
+   ・線は風より少しだけ太い（画面の上で太さを持たせた帯で描く。WebGL の線は1画素より太くできないため）
+   ・選ばれたときだけ読む（lazy）。出している間、風の線はお休み（重ねるとごちゃつくため。やめると元に戻す） */
+const CurrentLayer = (() => {
+  if (!Catalog.has("currents")) return null;
+  const meta = Catalog.meta("currents"), g = Catalog.gridInfo("currents");
+  const N = window.innerWidth < 700 ? 2400 : 4500, SLOTS = 32, STEP = 0.08, R = 1.0045;
+  let U = null, V = null, T = null, cells = null, ready = false, on = false, built = false, onChange = null;
+  let lines = null, mat = null, attr = null, frame = 0;
+  const lat = new Float32Array(N), lon = new Float32Array(N), age = new Float32Array(N), life = new Float32Array(N);
+  async function load() {
+    if (ready) return;
+    await Catalog.load("currents");
+    const raw = Catalog.grid("currents").raw, n = g.nx * g.ny, M = g.missing;
+    U = new Float32Array(n); V = new Float32Array(n); T = new Float32Array(n); const list = [];
+    for (let i = 0; i < n; i++) {
+      const u = raw[3*i], v = raw[3*i+1], t = raw[3*i+2];
+      U[i] = u === M ? NaN : u / g.scale; V[i] = v === M ? NaN : v / g.scale; T[i] = t === M ? NaN : t / g.scaleT;
+      if (u !== M && v !== M) list.push(i);
+    }
+    cells = Uint32Array.from(list); ready = true;
+  }
+  /** その地点の [u, v, 水温]。陸やデータのない所は null */
+  function sample(lonDeg, latDeg) {
+    if (!ready) return null;
+    const x = (((lonDeg - g.lo1) % 360) + 360) % 360 / g.dx, y = (g.la1 - latDeg) / g.dy;
+    if (y < 0 || y > g.ny - 1) return null;
+    const i0 = Math.floor(x) % g.nx, i1 = (i0 + 1) % g.nx, fx = x - Math.floor(x), j0 = Math.floor(y), j1 = Math.min(j0 + 1, g.ny - 1), fy = y - j0;
+    const a = j0*g.nx+i0, b = j0*g.nx+i1, c = j1*g.nx+i0, d = j1*g.nx+i1;
+    if (Number.isNaN(U[a] + U[b] + U[c] + U[d])) {                       /* 海岸ぎわ：一番近い升目の値 */
+      const k = (fy < 0.5 ? j0 : j1) * g.nx + (fx < 0.5 ? i0 : i1); return Number.isNaN(U[k]) ? null : [U[k], V[k], T[k]];
+    }
+    const bl = A => (A[a]*(1-fx)+A[b]*fx)*(1-fy) + (A[c]*(1-fx)+A[d]*fx)*fy;
+    const t = bl(T);
+    return [bl(U), bl(V), Number.isNaN(t) ? T[a] : t];
+  }
+  function spawn(i) {
+    for (let k = 0; k < 20; k++) {
+      const c = cells[(Math.random() * cells.length) | 0], j = Math.floor(c / g.nx), la = g.la1 - (j + Math.random() - 0.5) * g.dy;
+      if (Math.random() > Math.cos(la * D2R)) continue;                 /* 面積に合わせる（高緯度に偏らないよう） */
+      lat[i] = la; lon[i] = g.lo1 + ((c % g.nx) + Math.random() - 0.5) * g.dx; break;
+    }
+    age[i] = 0; life[i] = 120 + Math.random() * 160;
+  }
+  /* 帯（四角）で描く：区間ごとに4頂点。始点・終点・左右・時刻・水温・速さ */
+  function build() {
+    const S = N * SLOTS, VN = S * 4;
+    attr = {
+      a: new THREE.BufferAttribute(new Float32Array(VN * 3), 3).setUsage(THREE.DynamicDrawUsage),
+      b: new THREE.BufferAttribute(new Float32Array(VN * 3), 3).setUsage(THREE.DynamicDrawUsage),
+      birth: new THREE.BufferAttribute(new Float32Array(VN).fill(-1e6), 1).setUsage(THREE.DynamicDrawUsage),
+      temp: new THREE.BufferAttribute(new Float32Array(VN), 1).setUsage(THREE.DynamicDrawUsage),
+      spd: new THREE.BufferAttribute(new Float32Array(VN), 1).setUsage(THREE.DynamicDrawUsage),
+    };
+    const side = new Float32Array(VN), end = new Float32Array(VN), idx = new Uint32Array(S * 6);
+    for (let q = 0; q < S; q++) {
+      const v = q * 4; side[v] = -1; side[v+1] = 1; side[v+2] = -1; side[v+3] = 1; end[v] = 0; end[v+1] = 0; end[v+2] = 1; end[v+3] = 1;
+      idx.set([v, v+1, v+2, v+2, v+1, v+3], q * 6);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", attr.a); geo.setAttribute("aB", attr.b); geo.setAttribute("aBirth", attr.birth); geo.setAttribute("aTemp", attr.temp); geo.setAttribute("aSpd", attr.spd);
+    geo.setAttribute("aSide", new THREE.BufferAttribute(side, 1)); geo.setAttribute("aEnd", new THREE.BufferAttribute(end, 1));
+    geo.setIndex(new THREE.BufferAttribute(idx, 1));
+    const res = new THREE.Vector2(); renderer.getDrawingBufferSize(res);
+    mat = new THREE.ShaderMaterial({
+      uniforms: { uTime: { value: 0 }, uTrail: { value: SLOTS }, uRes: { value: res }, uWidth: { value: Math.max(2.0, 1.1 * renderer.getPixelRatio()) } },
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,   /* 帯の向き（表裏）は流れの向きで変わるので両面 */
+      vertexShader: `
+        attribute vec3 aB; attribute float aSide; attribute float aEnd; attribute float aBirth; attribute float aTemp; attribute float aSpd;
+        uniform float uTime; uniform float uTrail; uniform vec2 uRes; uniform float uWidth;
+        varying float vA; varying float vT; varying float vS; varying float vEdge;
+        void main(){
+          vA = (uTime - aBirth) / uTrail; vT = aTemp; vS = aSpd; vEdge = aSide;
+          vec4 pa = projectionMatrix * modelViewMatrix * vec4(position, 1.0), pb = projectionMatrix * modelViewMatrix * vec4(aB, 1.0);
+          vec2 d = (pb.xy / pb.w - pa.xy / pa.w) * uRes; float L = length(d); d = L > 1e-4 ? d / L : vec2(1.0, 0.0);
+          vec4 p = mix(pa, pb, aEnd);
+          p.xy += vec2(-d.y, d.x) * aSide * uWidth / uRes * p.w;          /* 画面の上で、左右に太さを付ける */
+          gl_Position = p;
+        }`,
+      fragmentShader: `
+        varying float vA; varying float vT; varying float vS; varying float vEdge;
+        vec3 ramp(float t){                                                /* 水温：冷たい青 → 温かい赤 */
+          if (t < 6.0)  return mix(vec3(0.22,0.42,1.00), vec3(0.25,0.75,1.00), clamp((t + 2.0) / 8.0, 0.0, 1.0));
+          if (t < 14.0) return mix(vec3(0.25,0.75,1.00), vec3(0.60,0.95,0.85), (t - 6.0) / 8.0);
+          if (t < 20.0) return mix(vec3(0.60,0.95,0.85), vec3(1.00,0.90,0.45), (t - 14.0) / 6.0);
+          if (t < 25.0) return mix(vec3(1.00,0.90,0.45), vec3(1.00,0.58,0.25), (t - 20.0) / 5.0);
+          return mix(vec3(1.00,0.58,0.25), vec3(1.00,0.30,0.25), clamp((t - 25.0) / 4.0, 0.0, 1.0));
+        }
+        void main(){
+          if (vA < 0.0 || vA > 1.0) discard;
+          float fade = pow(1.0 - vA, 1.4), soft = 1.0 - 0.45 * abs(vEdge) * abs(vEdge);
+          float strength = mix(0.4, 1.0, smoothstep(0.03, 0.5, vS));
+          gl_FragColor = vec4(ramp(vT) * fade * strength * soft * 0.95, 1.0);
+        }`,
+    });
+    lines = new THREE.Mesh(geo, mat); lines.frustumCulled = false; lines.renderOrder = 2; lines.visible = false; scene.add(lines);
+    for (let i = 0; i < N; i++) { spawn(i); age[i] = Math.random() * life[i]; }
+    built = true;
+  }
+  const tA = [0,0,0], tB = [0,0,0];
+  function step(dtScale) {
+    frame++;
+    const slot = frame % SLOTS, q0 = slot * N, A = attr.a.array, B = attr.b.array, Bi = attr.birth.array, Te = attr.temp.array, Sp = attr.spd.array;
+    for (let i = 0; i < N; i++) {
+      const s0 = sample(lon[i], lat[i]), v4 = (q0 + i) * 4;
+      if (!s0) { spawn(i); for (let k = 0; k < 4; k++) Bi[v4 + k] = -1e6; continue; }
+      const [u, v, t] = s0, sp = Math.hypot(u, v);
+      toXYZ(lat[i], lon[i], R, tA, 0);
+      const c = Math.max(0.15, Math.cos(lat[i] * D2R));
+      lat[i] += v * STEP * dtScale; lon[i] += u * STEP * dtScale / c;
+      if (lon[i] > 180) lon[i] -= 360; else if (lon[i] < -180) lon[i] += 360;
+      age[i] += dtScale;
+      if (age[i] > life[i] || Math.abs(lat[i]) > 84 || sp < 0.01) { spawn(i); for (let k = 0; k < 4; k++) Bi[v4 + k] = -1e6; continue; }
+      toXYZ(lat[i], lon[i], R, tB, 0);
+      for (let k = 0; k < 4; k++) { const p = (v4 + k) * 3; A[p] = tA[0]; A[p+1] = tA[1]; A[p+2] = tA[2]; B[p] = tB[0]; B[p+1] = tB[1]; B[p+2] = tB[2]; Bi[v4 + k] = frame; Te[v4 + k] = t; Sp[v4 + k] = sp; }
+    }
+    const off = q0 * 4, cnt = N * 4;
+    for (const [k, at] of Object.entries(attr)) { const w = k === "a" || k === "b" ? 3 : 1; at.updateRange.offset = off * w; at.updateRange.count = cnt * w; at.needsUpdate = true; }
+    mat.uniforms.uTime.value = frame;
+  }
+  return {
+    meta, sample: (lo, la) => sample(lo, la),
+    get visible() { return on; },
+    set onChange(f) { onChange = f; },
+    async setOn(v) {
+      v = !!v; if (v === on) return;
+      if (v) { try { await load(); } catch (e) { console.warn("海流を読めませんでした", e); return; } if (!built) build(); }
+      on = v; if (lines) lines.visible = v; onChange?.(v);
+    },
+    tick(dt) { if (on && built) step(Math.min(dt / 16.667, 3)); },
+    resize() { if (mat) renderer.getDrawingBufferSize(mat.uniforms.uRes.value); },
+  };
+})();
+
 /* ===== カメラと操作 ===== */
 const controls = new THREE.OrbitControls(camera, renderer.domElement);
 controls.enablePan = false; controls.enableDamping = true; controls.dampingFactor = 0.08;
@@ -1356,7 +1491,7 @@ const Rotate = (() => {
   };
 })();
 document.getElementById("spinfab")?.addEventListener("click", () => { Rotate.on = !Rotate.on; });   /* 歯車の外の丸ボタン：押すたびに回す／止める（速さはパネルの中で） */
-function resize() { const w = stage.clientWidth, h = stage.clientHeight; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); }
+function resize() { const w = stage.clientWidth, h = stage.clientHeight; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); CurrentLayer?.resize(); }
 window.addEventListener("resize", resize); resize();
 
 /* ===== Lens（仮）：目録のメタデータだけを読む ===== */
@@ -1422,6 +1557,8 @@ document.getElementById("d-layers").innerHTML = SCALAR_LAYERS.map(l => layerBloc
       <div class="sub">${NIGHT_LIGHTS.note}<br>出典：${NIGHT_LIGHTS.credit}</div></div>` : "")
   + (ON ? `<div class="layer"><label>${LAND_ICE.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${LAND_ICE.kind}</span></label>
       <div class="sub">${LAND_ICE.note}<br>出典：${LAND_ICE.credit}</div></div>` : "")
+  + (CurrentLayer ? `<div class="layer"><label>${CurrentLayer.meta.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${CurrentLayer.meta.kind}</span></label>
+      <div class="sub">${CurrentLayer.meta.model}。${CurrentLayer.meta.caution}<br>解像度：${CurrentLayer.meta.resolution}<br>出典：${CurrentLayer.meta.credit}</div></div>` : "")
   + `<div class="layer" id="why"><label>なんで？（小さな辞典）</label>
       <div class="sub"><a href="learn/typhoon.html" style="color:var(--accent)">台風の風と雲のしくみ</a>：地上で吸い込み、目の壁でのぼり、上空で吹き出し、目で下がる（動く模式図）<br><a href="learn/winds.html" style="color:var(--accent)">地球の大きな風の帯</a>：貿易風・偏西風・ジェット気流・極東風と、それを作る空気の大きな輪</div></div>`
   + (StateLayer ? `<div class="layer"><label>${StateLayer.info.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${StateLayer.info.kind}</span></label>
@@ -1479,6 +1616,7 @@ if (MapLayer) {
     { key: "rain", label: "雨", get: () => layerById("rain")?.visible, set: v => setLayer("rain", v) },
     { key: "cloud-ir", label: "雲", get: () => layerById("cloud-ir")?.visible, set: v => setLayer("cloud-ir", v) },
     { key: "pressure", label: "気圧", get: () => layerById("pressure")?.visible, set: v => setLayer("pressure", v) },
+    { key: "currents", label: "海流", get: () => !!CurrentLayer?.visible, set: v => CurrentLayer?.setOn(v) },
     { key: "sst-anom", label: "海水温（平年差）", get: () => layerById("sst-anom")?.visible, set: v => setLayer("sst-anom", v) },
     { key: "sea-ice", label: "海氷", get: () => layerById("sea-ice")?.visible, set: v => setLayer("sea-ice", v) },
     { key: "quakes", label: "地震", get: () => layerById("quakes")?.visible, set: v => setLayer("quakes", v) },
@@ -1491,7 +1629,7 @@ if (MapLayer) {
     { key: "capitals", label: "★ 首都", get: () => CapitalLayer?.visible, set: v => { if (CapitalLayer) CapitalLayer.visible = v; } },
     { key: "map", label: "国境・地名", get: () => MapLayer.visible, set: v => { MapLayer.visible = v; box.querySelector(".viewbox").hidden = !v; } },
     { key: "sky", label: "✦ 星座", get: () => SkyLayer?.visible, set: v => { if (SkyLayer) SkyLayer.visible = v; } },
-  ].filter(c => c.key === "wind" || c.key === "map" || ((c.key === "sky" || c.key === "milky") ? !!SkyLayer : c.key === "guide" ? !!GuideLayer : c.key === "aurora" ? !!AuroraLayer : c.key === "plates" ? !!PlateLayer : c.key === "capitals" ? !!CapitalLayer : !!layerById(c.key)));
+  ].filter(c => c.key === "wind" || c.key === "map" || (c.key === "currents" ? !!CurrentLayer : false) || ((c.key === "sky" || c.key === "milky") ? !!SkyLayer : c.key === "guide" ? !!GuideLayer : c.key === "aurora" ? !!AuroraLayer : c.key === "plates" ? !!PlateLayer : c.key === "capitals" ? !!CapitalLayer : !!layerById(c.key)));
   /* 見方のセット（プリセット）：物語ごとに、関係が見える組み合わせをまとめて出す。そこから1つずつ足し引きもできる。
      国境・地名、赤道・日付変更線は「下敷き」なので、セットでは変えない */
   const PRESETS = [
@@ -1502,6 +1640,7 @@ if (MapLayer) {
   ];
   const KEEP = ["map", "guide"];
   const applyPreset = P => {
+    if (CurrentLayer?.visible && !P.on.includes("currents")) CurrentLayer.setOn(false);   /* 先に海流をやめて、風を選べるようにする */
     for (const c of CHIPS) { if (KEEP.includes(c.key) || box.querySelector(`[data-chip="${c.key}"]`)?.disabled) continue; const want = P.on.includes(c.key); if (!!c.get() !== want) c.set(want); }
     if (P.far && camera.position.length() < P.far) camera.position.setLength(P.far);   /* 宇宙は、衛星が入るところまで引く */
     syncChips(); updateChip();
@@ -1509,7 +1648,7 @@ if (MapLayer) {
   /* 層のボタンを分野ごとの枠に分ける（ダッシュボードのように）。枠はたためる（たたんだ状態はこの端末にだけ覚える） */
   const GROUPS = [
     { key: "air", en: "AIR", ja: "空気", keys: ["wind", "rain", "cloud-ir", "pressure"] },
-    { key: "sea", en: "SEA", ja: "海", keys: ["sst-anom", "sea-ice"] },
+    { key: "sea", en: "SEA", ja: "海", keys: ["currents", "sst-anom", "sea-ice"] },
     { key: "earth", en: "EARTH", ja: "大地", keys: ["quakes", "volcanoes", "plates"] },
     { key: "space", en: "SPACE", ja: "宇宙", keys: ["sats", "aurora", "milky", "sky"] },
     { key: "map", en: "MAP", ja: "地図", keys: ["map", "capitals", "guide"] },
@@ -1540,6 +1679,22 @@ if (MapLayer) {
     const wh = box.querySelector(".windh"); if (wh) airB.appendChild(wh);
   }
   const mapB = grpBody("map"); if (mapB) mapB.appendChild(box.querySelector(".viewbox"));
+  /* 海流：出している間は風の線をお休みにする（消したのではなく、やめると元に戻す） */
+  const seaB = grpBody("sea");
+  if (seaB && CurrentLayer) seaB.insertAdjacentHTML("beforeend", `<p class="note cur-note" hidden><b>海流（いつもの流れ）</b>：今日の海流ではなく、漂流ブイの何十年ぶんの記録から作った<b>${CurrentLayer.meta.month}月のいつもの流れ</b>です。線の色＝水温（同じ記録の平年値）：<span style="color:rgb(64,140,255)">青 冷たい</span> → <span style="color:rgb(150,240,215)">緑がかった白</span> → <span style="color:rgb(255,150,64)">橙</span> → <span style="color:rgb(255,77,64)">赤 温かい</span>。暖流（黒潮・メキシコ湾流など）は温かい水を極の方へ、寒流（親潮・カリフォルニア海流など）は冷たい水を赤道の方へ運びます。流れる速さは見やすさのための倍率（本物は速い所で秒速1〜2m）。出している間、風の線はお休みです</p>`);
+  let windWas = false;
+  const curSync = () => {
+    const on = !!CurrentLayer?.visible;
+    const wc = box.querySelector('[data-chip="wind"]'); if (wc) wc.disabled = on || (NamesMode && !NAMES_OK.includes("wind"));
+    box.querySelectorAll("[data-wname],[data-wdir],[data-wlev]").forEach(b => { b.disabled = on; });
+    const nt = box.querySelector(".cur-note"); if (nt) nt.hidden = !on;
+    syncChips();
+  };
+  if (CurrentLayer) CurrentLayer.onChange = on => {
+    if (on) { windWas = VisualParticles.visible; VisualParticles.visible = false; }
+    else { VisualParticles.visible = windWas && !NamesMode; }
+    curSync();
+  };
   let wname = null;
   const setDir = v => { VisualParticles.dirMode = v; const b = box.querySelector("[data-wdir]"); if (b) b.setAttribute("aria-pressed", String(v)); const lg = box.querySelector(".wdir-legend"); if (lg) lg.hidden = !v; };
   const setWName = async key => {
@@ -1547,6 +1702,7 @@ if (MapLayer) {
     box.querySelectorAll("[data-wname]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.wname === wname)));
     const nt = box.querySelector(".wname-note");
     if (!W) { VisualParticles.setBand(null); if (nt) nt.hidden = true; return; }
+    if (CurrentLayer?.visible) return;
     const wc = CHIPS.find(c => c.key === "wind"); if (wc && !wc.get()) wc.set(true);
     if (Catalog.has(WIND_LEVELS[W.lev].id)) { await setWindLevel(W.lev); box.querySelectorAll("[data-wlev]").forEach(x => x.setAttribute("aria-pressed", String(+x.dataset.wlev === W.lev))); }
     setDir(true); VisualParticles.setBand(W.band, W.jet || 0);
@@ -1594,6 +1750,8 @@ if (MapLayer) {
     const wn = box.querySelector(".wnames"); if (wn) wn.hidden = !!m.names;
     box.querySelector(".names-note").hidden = !m.names;
     curMode = k; NamesMode = !!m.names;
+    if (CurrentLayer?.visible) { windWas = m.wind; VisualParticles.visible = false; }   /* 海流を出している間は、風はお休みのまま（やめるとこのモードの風に戻る） */
+    if (CurrentLayer) curSync();
     syncChips();
     updateChip();
   };
@@ -1629,6 +1787,7 @@ if (MapLayer) {
     if (b.dataset.myset) { const m = myLoad()[+b.dataset.myset]; if (!m) return;
       if (m.mode && MODES[m.mode] && m.mode !== curMode) setMode(m.mode);
       if (m.view && MapLayer.views[m.view]) setView(m.view);
+      if (CurrentLayer?.visible && !m.on.includes("currents")) CurrentLayer.setOn(false);
       for (const c of CHIPS) { if (box.querySelector(`[data-chip="${c.key}"]`)?.disabled) continue; const want = m.on.includes(c.key); if (!!c.get() !== want) c.set(want); }
       syncChips(); updateChip(); return; }
     if (b.dataset.mydel) { const a = myLoad(), i = +b.dataset.mydel; if (!a[i] || !window.confirm(`「${a[i].name}」を消しますか？`)) return; a.splice(i, 1); mySave(a); myRender(); return; }
@@ -1697,6 +1856,8 @@ renderer.domElement.addEventListener("pointerup", e => {
   const ll = `${Math.abs(la).toFixed(1)}°${la >= 0 ? "N" : "S"} ${Math.abs(lo).toFixed(1)}°${lo >= 0 ? "E" : "W"}`;
   document.getElementById("d-pick").innerHTML = `<span class="num">${ll}</span>　風速${field.meta.level && field.meta.level !== "地上10m" ? "（" + field.meta.level.replace(/（.*）/, "") + "）" : ""} <span class="num">${sp.toFixed(1)} m/s</span>　${DIRS[Math.round(from / 22.5) % 16]}の風 <span style="color:var(--ink-faint)">（${wm.kind}・格子から補間）</span>`
     + SCALAR_LAYERS.filter(l => l.visible).map(l => presentValue(l, l.field.sample(lo, la, Clock.now()))).filter(Boolean).map(t => "<br>" + t).join("")
+    + (CurrentLayer?.visible ? (() => { const c = CurrentLayer.sample(lo, la); if (!c) return ""; const sp = Math.hypot(c[0], c[1]), to = (Math.atan2(c[0], c[1]) / D2R + 360) % 360;
+        return `<br>海流（${CurrentLayer.meta.month}月のいつもの流れ） <span class="num">${sp.toFixed(2)} m/s</span>　${DIRS[Math.round(to / 22.5) % 16]}へ${Number.isNaN(c[2]) ? "" : `・水温（平年） <span class="num">${c[2].toFixed(1)}℃</span>`}`; })() : "")
     + FEATURE_LAYERS.filter(l => l.shown).map(l => { const f = l.nearest(lo, la, 0.5 + 1.2 * (camera.position.length() - 1)); return f ? "<br>" + (l.profile.present ? l.profile.present(f) : presentObs(f)) : ""; }).join("");
   showPick(document.getElementById("d-pick").innerHTML.replace(/<span style="color:var\(--ink-faint\)">[^<]*<\/span>/g, ""));   // 項目ごとに改行したまま
 });
@@ -1717,6 +1878,7 @@ function loop(now) {
   const dt = Math.min(now - last, 100); last = now;
   frames.push(dt); if (frames.length > 120) frames.shift();
   if (VisualParticles.visible) VisualParticles.step(Math.min(dt / 16.667, 3));
+  CurrentLayer?.tick(dt);
   for (const l of SCALAR_LAYERS) l.tick?.(); MapLayer?.tick(); CapitalLayer?.tick(); StateLayer?.tick(); SkyLayer?.tick(); GuideLayer?.tick(); AuroraLayer?.tick(now); ShakeRipples?.tick(now, !!FEATURE_LAYERS.find(l => l.id === "quakes")?.visible);
   Rotate.tick(now, dt); Spin.tick(); controls.update();
   for (const l of FEATURE_LAYERS) l.tick(camera.position.length());

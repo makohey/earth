@@ -154,6 +154,16 @@ jobs:
       - uses: actions/cache/restore@v6
         if: steps.reuse.outputs.deploy == 'true'
         with:
+          path: currents_cache
+          key: currents-${{ github.run_id }}
+          restore-keys: currents-
+      - name: 海流（NOAA AOML 漂流ブイの月平均、月ごとに1回だけ）
+        if: steps.reuse.outputs.deploy == 'true'
+        continue-on-error: true
+        run: python scripts/fetch_currents.py --latest _site/data/latest --cache currents_cache
+      - uses: actions/cache/restore@v6
+        if: steps.reuse.outputs.deploy == 'true'
+        with:
           path: shake_cache
           key: shake-${{ github.run_id }}
           restore-keys: shake-
@@ -166,6 +176,11 @@ jobs:
         with:
           path: volc_cache
           key: volc-${{ github.run_id }}
+      - uses: actions/cache/save@v6
+        if: steps.reuse.outputs.deploy == 'true' && hashFiles('currents_cache/*') != ''
+        with:
+          path: currents_cache
+          key: currents-${{ github.run_id }}
       - uses: actions/cache/save@v6
         if: steps.reuse.outputs.deploy == 'true' && hashFiles('shake_cache/*') != ''
         with:
