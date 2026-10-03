@@ -1255,7 +1255,13 @@ const Rotate = (() => {
       if (on) { satWas = !!SatLayer?.visible; if (satWas) SatLayer.visible = false; }   /* 衛星は「いま」の位置で飛ぶので、早回しの間はお休み（止めたら元に戻す） */
       else { spinAngle = 0; realSun(); if (SatLayer && satWas) SatLayer.visible = true; satWas = false; }
       const fab = document.getElementById("spinfab"); if (fab) { fab.setAttribute("aria-pressed", String(on)); fab.setAttribute("aria-label", on ? "地球を回すのをやめる" : "地球を回す（自転の演出）"); }
-      document.getElementById("spinbadge")?.toggleAttribute("hidden", !on);
+      const bd = document.getElementById("spinbadge");
+      if (bd) {
+        if (on) { const ss = subsolarPoint(Clock.now()), la = Math.abs(ss.lat).toFixed(1);
+          bd.innerHTML = `<b>↻ 自転（オブジェ表示）</b><br>地軸の傾き ${EARTH.axialTiltDeg.toFixed(1)}°・向きは今日の本物<br>太陽の真下 ${ss.lat >= 0 ? "北緯" : "南緯"}${la}°（${ss.lat >= 0 ? "北" : "南"}半球が夏の側）<br><span>速さと昼夜の位置は演出です</span>`; }
+        bd.hidden = !on;
+      }
+      document.body.classList.toggle("objet", on);   /* オブジェ表示：下の帯と操作の案内を隠す（歯車・回すボタン・左上の注意書きは残す） */
       onChange?.(on);
     },
     tick(now, dt) {
@@ -1265,7 +1271,7 @@ const Rotate = (() => {
       tiltK += ((on ? 1 : 0) - tiltK) * Math.min(1, dt / 450);
       if (!on && tiltK < 0.002) { tiltK = 0; if (camera.up.y !== 1) camera.up.set(0, 1, 0); }
       else {
-        const p = [0, 0, 0]; toXYZ(66.5607, 270, 1, p, 0);
+        const p = [0, 0, 0]; toXYZ(90 - EARTH.axialTiltDeg, 270, 1, p, 0);
         EP.set(p[0], p[1], p[2]).applyAxisAngle(Y, -gmstDeg(Clock.now()) * D2R + spinAngle);
         UP.copy(Y).lerp(EP, tiltK).normalize();
         D.copy(camera.position).normalize();
@@ -1533,7 +1539,6 @@ if (MapLayer) {
     nt.innerHTML = `<b>自転の演出</b>：太陽を止めたまま、地球を西から東へ回しています。本当の速さ（1時間に15°、1周24時間）ではなく、${SPIN_TXT[Rotate.speed]}。画面の上を、地球が太陽を回る面の北に合わせているので、地軸が本物どおり約23.4°傾いて見えます（傾いている向きは今日の位置。真横から見ると一番よく傾いて見え、地軸がこちら向き・向こう向きに倒れている方向から見ると、まっすぐに見えます）。回している間の昼と夜の位置は、本当の時刻とは合いません（やめると本当の位置に戻ります）。雲・風・地震などのデータは地球に付いたまま一緒に回るので、データの時刻は変わりません。${SatLayer ? "人工衛星は「いま」の位置で飛んでいるので、回している間はお休みです。" : ""}触ると止まり、離すとまた回ります`;
     const sc = box.querySelector('[data-chip="sats"]'); if (sc) sc.disabled = on || (NamesMode && !NAMES_OK.includes("sats"));
     const cb = document.getElementById("t-sats"); if (cb) { cb.disabled = on; cb.checked = !!SatLayer?.visible; }
-    document.getElementById("spinbadge")?.toggleAttribute("hidden", !on);
     syncChips();
   };
   Rotate.onChange = spinSync;
