@@ -860,6 +860,7 @@ async function createPlateLayer() {
       present(r) { const k = PLATE_KIND[r[4]], [a, b] = r[6].split(/[-\/\\]/);
         return `プレートの境目：${name(a)} と ${name(b)}（<span class="num">${k.ja}</span>）　1年に約<span class="num">${(r[5] / 10).toFixed(1)} cm</span> ${k.verb} <span style="color:var(--ink-faint)">（研究モデルの値）</span>`; },
     },
+    group,
     set visible(v) { group.visible = v; }, get visible() { return group.visible; },
     get shown() { return group.visible; },
     nearest(lon, lat, maxDeg) { let best = null, bd = Math.max(maxDeg, 1.2);
@@ -1359,14 +1360,14 @@ const CurrentLayer = (() => {
    ・層の深さ：地震波から作られた標準モデル PREM（Dziewonski & Anderson 1981）。地殻〜24km・410km・660km・核とマントルの境 2,891km・内核の境 5,150km
    ・切り口の色：深さごとの温度の推定（文献の代表的な値。幅がある）。「こう考えられている」の位置づけ
    ・切り取った中に、過去の地震（M5以上）を本当の深さで置く。沈み込んだ海のプレートの形が浮かぶ
-   ・切る場所：日本を東西に通る断面（北緯38°・東経142°を通る大円）と、東経100°の子午線。日本の下へ沈み込むプレートが見える向き */
+   ・切る場所：日本を東西に通る断面（北緯38°・東経142°を通る大円）と、東経70°の子午線。日本の下へ沈み込むプレートが見える向き */
 renderer.localClippingEnabled = true;
 const InteriorLayer = (() => {
   const P = new THREE.Vector3(), tmp = [0, 0, 0];
   toXYZ(38, 142, 1, tmp, 0); P.set(...tmp);
-  const la = 38 * D2R, lo = 142 * D2R, lo2 = 100 * D2R;
+  const la = 38 * D2R, lo = 142 * D2R, lo2 = 70 * D2R;
   const n1 = new THREE.Vector3(-Math.sin(la) * Math.cos(lo), Math.cos(la), Math.sin(la) * Math.sin(lo)).normalize();   /* 断面1の法線＝その地点の北向き */
-  const n2 = new THREE.Vector3(-Math.sin(lo2), 0, -Math.cos(lo2)).normalize();                                       /* 断面2の法線＝東経100°の東向き（日本が断面1のまん中寄りに来るように） */
+  const n2 = new THREE.Vector3(-Math.sin(lo2), 0, -Math.cos(lo2)).normalize();                                       /* 断面2の法線＝東経70°の東向き（切り口を広めに開ける） */
   const clip = [new THREE.Plane(n1.clone().negate(), 0), new THREE.Plane(n2.clone().negate(), 0)];
   /* 深さ（km）と温度（℃）の目安。地表 15 → 地殻の底 約500 → プレートの底(100km) 約1,300 → 410km 約1,500 → 660km 約1,600
      → 核の上(2,700km) 約2,500 → 核とマントルの境 約3,700 → 内核の境 約5,000 → 中心 約5,400（推定に数百℃の幅） */
@@ -1434,7 +1435,7 @@ const InteriorLayer = (() => {
     quakes.frustumCulled = false; quakes.renderOrder = 3; quakes.visible = on; scene.add(quakes);
   }
   let on = false, onChange = null, camWas = null;
-  const cam = new THREE.Vector3();
+  const cam = new THREE.Vector3(), CAM = [0.12, 0.42, 4.8];   /* 目線の向き（断面1・断面2・日本の混ぜ具合）と距離 */
   return {
     get visible() { return on; }, set onChange(f) { onChange = f; },
     get info() { return Catalog.has("quake-history") ? Catalog.meta("quake-history") : null; },
@@ -1443,9 +1444,13 @@ const InteriorLayer = (() => {
       globe.material.uniforms.uCut.value = on ? 1 : 0; globe.material.uniforms.uN1.value.copy(n1); globe.material.uniforms.uN2.value.copy(n2);
       f1.visible = f2.visible = labels.visible = on;
       const coast = window.__coast; if (coast) { coast.material.clippingPlanes = on ? clip : null; coast.material.clipIntersection = true; coast.material.needsUpdate = true; }
+      /* プレートの境目：切り取った所の上は消す（線と名札は切り抜き、光の帯は断面の間だけお休み） */
+      if (PlateLayer?.group) PlateLayer.group.traverse(o => { if (!o.material) return;
+        if (o.material.isShaderMaterial) { o.visible = !on; return; }
+        o.material.clippingPlanes = on ? clip : null; o.material.clipIntersection = true; o.material.needsUpdate = true; });
       if (on) {                                                          /* 切り口の正面へ回り込む（やめると元の場所へ） */
         camWas = camera.position.clone();
-        camera.position.copy(n1.clone().add(n2.clone().multiplyScalar(0.18)).add(P.clone().multiplyScalar(0.22)).normalize().multiplyScalar(Math.max(3.6, camera.position.length())));   /* 日本を通る断面をほぼ正面から */
+        camera.position.copy(n1.clone().add(n2.clone().multiplyScalar(CAM[0])).add(P.clone().multiplyScalar(CAM[1])).normalize().multiplyScalar(CAM[2]));   /* 断面を斜め前から、日本の下が画面に大きく入る距離で */
         camera.lookAt(0, 0, 0);
       } else if (camWas) { camera.position.copy(camWas); camera.lookAt(0, 0, 0); camWas = null; }
       onChange?.(on);
@@ -1832,10 +1837,10 @@ if (MapLayer) {
   if (seaB && CurrentLayer) seaB.insertAdjacentHTML("beforeend", `<p class="note cur-note" hidden><b>海流（いつもの流れ）</b>：今日の海流ではなく、漂流ブイの何十年ぶんの記録から作った<b>${CurrentLayer.meta.month}月のいつもの流れ</b>です。線の色＝水温（同じ記録の平年値）：<span style="color:rgb(64,140,255)">青 冷たい</span> → <span style="color:rgb(150,240,215)">緑がかった白</span> → <span style="color:rgb(255,150,64)">橙</span> → <span style="color:rgb(255,77,64)">赤 温かい</span>。暖流（黒潮・メキシコ湾流など）は温かい水を極の方へ、寒流（親潮・カリフォルニア海流など）は冷たい水を赤道の方へ運びます。流れる速さは見やすさのための倍率（本物は速い所で秒速1〜2m）。海流の名札は「だいたいこの辺を流れる」目安の位置で、文字の色は<span style="color:rgb(255,176,110)">暖流＝橙</span>・<span style="color:rgb(125,200,255)">寒流＝水色</span>。拡大すると名札が増えます。出している間、風の線はお休みです</p>`);
   /* 地球の中（断面）：入る前の層の状態を覚えて全部しまい、ほかのボタンは押せなくする。出るときに元へ戻す */
   const earthB = grpBody("earth");
-  if (earthB) earthB.insertAdjacentHTML("beforeend", `<p class="note int-note" hidden><b>地球の中（断面）</b>：日本を東西に通る断面と、東経125°の断面で、地球を4分の1切り取っています。層の深さは地震波から作られた標準モデル（PREM）、切り口の色は深さごとの温度の推定（文献の代表的な値で、数百℃の幅があります）。切り取った中の点は、1990〜2025年の M5.0 以上の地震を本当の深さに置いたものです（色＝深さ：<span style="color:rgb(255,158,64)">橙 浅い〜70km</span>／<span style="color:rgb(160,240,120)">黄緑 70〜300km</span>／<span style="color:rgb(130,170,255)">青紫 300km〜</span>）。日本の下で、点が斜めに深くなっていく列が、沈み込んだ海のプレートだと考えられています。中の動き（マントル対流など）は、まだ入れていません</p>`);
+  if (earthB) earthB.insertAdjacentHTML("beforeend", `<p class="note int-note" hidden><b>地球の中（断面）</b>：日本を東西に通る断面と、東経125°の断面で、地球を4分の1切り取っています。層の深さは地震波から作られた標準モデル（PREM）、切り口の色は深さごとの温度の推定（文献の代表的な値で、数百℃の幅があります）。切り取った中の点は、1990〜2025年の M5.0 以上の地震を本当の深さに置いたものです。プレートの境目（地表の線）も一緒に出しています。点の列が地表の境目（海溝）から始まって、斜めに深くなっていくのを見てください（色＝深さ：<span style="color:rgb(255,158,64)">橙 浅い〜70km</span>／<span style="color:rgb(160,240,120)">黄緑 70〜300km</span>／<span style="color:rgb(130,170,255)">青紫 300km〜</span>）。日本の下で、点が斜めに深くなっていく列が、沈み込んだ海のプレートだと考えられています。中の動き（マントル対流など）は、まだ入れていません</p>`);
   let intSaved = null;
   const intSync = on => {
-    box.querySelectorAll("[data-chip]").forEach(b => { if (b.dataset.chip !== "interior") b.disabled = on; });
+    box.querySelectorAll("[data-chip]").forEach(b => { if (b.dataset.chip !== "interior" && b.dataset.chip !== "plates") b.disabled = on; });   /* 断面の間も、プレートの境目は出し入れできる */
     box.querySelectorAll("[data-mode],[data-preset],[data-myset],[data-wname],[data-wdir],[data-wlev]").forEach(b => { b.disabled = on; });
     const nt = box.querySelector(".int-note"); if (nt) nt.hidden = !on;
   };
@@ -1844,6 +1849,7 @@ if (MapLayer) {
       intSaved = Object.fromEntries(CHIPS.filter(c => c.key !== "interior").map(c => [c.key, !!c.get()]));
       for (const c of CHIPS) if (c.key !== "interior" && c.key !== "sky" && c.key !== "milky" && c.get()) c.set(false);
       VisualParticles.visible = false; for (const l of SCALAR_LAYERS) { l.visible = false; }
+      const pc = CHIPS.find(c => c.key === "plates"); if (pc && !pc.get()) pc.set(true);   /* 地震の点の「始まり」が分かるよう、プレートの境目は最初から出す */
       intSync(true);
     } else {
       intSync(false); setMode(curMode);                                 /* ボタンを戻し、モードの見た目に戻してから、入る前の層を戻す */
