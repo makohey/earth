@@ -1216,6 +1216,35 @@ const CurrentLayer = (() => {
     const t = bl(T);
     return [bl(U), bl(V), Number.isNaN(t) ? T[a] : t];
   }
+  /* 海流の名札：だいたいこの辺を流れるという目安の位置（手で置いたもの）。1＝全体を見ているときから、2＝拡大したとき。
+     文字の色は 暖流＝橙・寒流＝水色（線の水温の色とそろえる） */
+  const NAMES = [
+    ["黒潮", 31.0, 136.5, 1, 1], ["メキシコ湾流", 35.5, -71, 1, 1], ["北大西洋海流", 51, -28, 1, 1],
+    ["北赤道海流", 13, 172, 1, 1], ["南赤道海流", -6, -125, 1, 1], ["南極環流", -56, -100, 1, 0], ["南極環流", -50, 85, 1, 0],
+    ["親潮", 41.5, 147, 2, 0], ["対馬海流", 37.5, 133.5, 2, 1], ["北太平洋海流", 42, -165, 2, 1], ["アラスカ海流", 56, -146, 2, 1],
+    ["カリフォルニア海流", 32, -124, 2, 0], ["赤道反流", 7, -140, 2, 1], ["ペルー海流", -20, -78, 2, 0], ["ブラジル海流", -27, -43, 2, 1],
+    ["ベンゲラ海流", -24, 11, 2, 0], ["アガラス海流", -34, 29, 2, 1], ["東オーストラリア海流", -31, 156, 2, 1], ["西オーストラリア海流", -27, 109, 2, 0],
+    ["カナリア海流", 25, -20, 2, 0], ["ラブラドル海流", 52, -51, 2, 0],
+  ];
+  let labels = null; const cam = new THREE.Vector3(), wp = new THREE.Vector3();
+  function buildLabels() {
+    labels = new THREE.Group(); labels.visible = false; scene.add(labels);
+    const p = [0, 0, 0];
+    for (const [ja, la, lo, rank, warm] of NAMES) {
+      const sp = makeTextSprite(ja, warm ? "rgba(255,176,110,0.95)" : "rgba(125,200,255,0.95)", 500, 11.5);
+      toXYZ(la, lo, 1.012, p, 0); sp.position.set(p[0], p[1], p[2]); sp.userData.rank = rank; labels.add(sp);
+    }
+  }
+  function tickLabels() {
+    if (!labels || !labels.visible) return;
+    const dist = camera.position.length(), h = stage.clientHeight || 800, maxRank = dist > 3.4 ? 1 : 2;
+    cam.copy(camera.position).normalize();
+    for (const sp of labels.children) {
+      wp.copy(sp.position).normalize();
+      const show = sp.userData.rank <= maxRank && wp.dot(cam) > 0.25;            /* 裏側の名札は出さない */
+      sp.visible = show; if (show) { const k = sp.userData.px / h * 2 * Math.tan(camera.fov / 2 * D2R); sp.scale.set(k * sp.userData.aspect, k, 1); }
+    }
+  }
   function spawn(i) {
     for (let k = 0; k < 20; k++) {
       const c = cells[(Math.random() * cells.length) | 0], j = Math.floor(c / g.nx), la = g.la1 - (j + Math.random() - 0.5) * g.dy;
@@ -1277,10 +1306,10 @@ const CurrentLayer = (() => {
     });
     lines = new THREE.Mesh(geo, mat); lines.frustumCulled = false; lines.renderOrder = 2; lines.visible = false; scene.add(lines);
     for (let i = 0; i < N; i++) { spawn(i); age[i] = Math.random() * life[i]; pLat[i] = lat[i]; pLon[i] = lon[i]; }
-    built = true;
+    buildLabels(); built = true;
   }
-  /* 尻尾を長くつなげる：粒は毎コマ動かし、跡（区間）は KEEP コマに1回だけ書く。区間の数（重さ）は同じまま、尻尾の長さが KEEP 倍に */
-  const KEEP = 2, pLat = new Float32Array(N), pLon = new Float32Array(N), dead = new Uint8Array(N);
+  /* 尻尾を長くつなげる：粒は毎コマ動かし、跡（区間）は KEEP コマに1回だけ書く（3：重なって色が飽和しない長さの上限の目安）。区間の数（重さ）は同じまま、尻尾の長さが KEEP 倍に */
+  const KEEP = 3, pLat = new Float32Array(N), pLon = new Float32Array(N), dead = new Uint8Array(N);
   let sub = 0;
   const tA = [0,0,0], tB = [0,0,0];
   function step(dtScale) {
@@ -1316,9 +1345,9 @@ const CurrentLayer = (() => {
     async setOn(v) {
       v = !!v; if (v === on) return;
       if (v) { try { await load(); } catch (e) { console.warn("海流を読めませんでした", e); return; } if (!built) build(); }
-      on = v; if (lines) lines.visible = v; onChange?.(v);
+      on = v; if (lines) lines.visible = v; if (labels) labels.visible = v; onChange?.(v);
     },
-    tick(dt) { if (on && built) step(Math.min(dt / 16.667, 3)); },
+    tick(dt) { if (on && built) { step(Math.min(dt / 16.667, 3)); tickLabels(); } },
     resize() { if (mat) renderer.getDrawingBufferSize(mat.uniforms.uRes.value); },
   };
 })();
@@ -1690,7 +1719,7 @@ if (MapLayer) {
   const mapB = grpBody("map"); if (mapB) mapB.appendChild(box.querySelector(".viewbox"));
   /* 海流：出している間は風の線をお休みにする（消したのではなく、やめると元に戻す） */
   const seaB = grpBody("sea");
-  if (seaB && CurrentLayer) seaB.insertAdjacentHTML("beforeend", `<p class="note cur-note" hidden><b>海流（いつもの流れ）</b>：今日の海流ではなく、漂流ブイの何十年ぶんの記録から作った<b>${CurrentLayer.meta.month}月のいつもの流れ</b>です。線の色＝水温（同じ記録の平年値）：<span style="color:rgb(64,140,255)">青 冷たい</span> → <span style="color:rgb(150,240,215)">緑がかった白</span> → <span style="color:rgb(255,150,64)">橙</span> → <span style="color:rgb(255,77,64)">赤 温かい</span>。暖流（黒潮・メキシコ湾流など）は温かい水を極の方へ、寒流（親潮・カリフォルニア海流など）は冷たい水を赤道の方へ運びます。流れる速さは見やすさのための倍率（本物は速い所で秒速1〜2m）。出している間、風の線はお休みです</p>`);
+  if (seaB && CurrentLayer) seaB.insertAdjacentHTML("beforeend", `<p class="note cur-note" hidden><b>海流（いつもの流れ）</b>：今日の海流ではなく、漂流ブイの何十年ぶんの記録から作った<b>${CurrentLayer.meta.month}月のいつもの流れ</b>です。線の色＝水温（同じ記録の平年値）：<span style="color:rgb(64,140,255)">青 冷たい</span> → <span style="color:rgb(150,240,215)">緑がかった白</span> → <span style="color:rgb(255,150,64)">橙</span> → <span style="color:rgb(255,77,64)">赤 温かい</span>。暖流（黒潮・メキシコ湾流など）は温かい水を極の方へ、寒流（親潮・カリフォルニア海流など）は冷たい水を赤道の方へ運びます。流れる速さは見やすさのための倍率（本物は速い所で秒速1〜2m）。海流の名札は「だいたいこの辺を流れる」目安の位置で、文字の色は<span style="color:rgb(255,176,110)">暖流＝橙</span>・<span style="color:rgb(125,200,255)">寒流＝水色</span>。拡大すると名札が増えます。出している間、風の線はお休みです</p>`);
   let windWas = false;
   const curSync = () => {
     const on = !!CurrentLayer?.visible;
