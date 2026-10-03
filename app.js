@@ -1237,10 +1237,77 @@ const Spin = (() => {
    実際の速さ（1時間に15°）ではない。回しているあいだの昼夜の位置は本当の時刻からずれるので、止めたら本当の太陽の位置に戻す。
    指で触ったら止まり、離して少したつとまた回る */
 const realSun = () => { const s = subsolarPoint(Clock.now()), p = [0,0,0]; toXYZ(s.lat, s.lon, 1, p, 0); sunDir.set(p[0], p[1], p[2]); };
+/* ===== 月（自転の演出のときだけ）：外からデータをもらわず、式で計算する =====
+   位置は簡単な月の式（主な揺らぎの項だけ。誤差はおよそ1°以内）。向き・満ち欠け・地球に同じ面を向けることは本物どおり。
+   距離だけ縮めて描く（本物は地球の半径の約60倍。ここでは約3.6倍。近い日・遠い日の差は比率のまま残す）。大きさの比（地球の約0.27倍）は本物 */
+const MoonLayer = (() => {
+  const R_DRAW = 3.6, KM_MEAN = 384400, SIZE = 0.2727;
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { uSun: { value: sunDir } },
+    vertexShader: `varying vec3 vN; varying vec3 vP; void main(){ vP = normal; vN = normalize(mat3(modelMatrix) * normal); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+    fragmentShader: `uniform vec3 uSun; varying vec3 vN; varying vec3 vP;
+      float h(vec3 p){ return fract(sin(dot(p, vec3(127.1,311.7,74.7))) * 43758.5453); }
+      float n3(vec3 p){ vec3 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
+        return mix(mix(mix(h(i),h(i+vec3(1,0,0)),f.x),mix(h(i+vec3(0,1,0)),h(i+vec3(1,1,0)),f.x),f.y),
+                   mix(mix(h(i+vec3(0,0,1)),h(i+vec3(1,0,1)),f.x),mix(h(i+vec3(0,1,1)),h(i+vec3(1,1,1)),f.x),f.y),f.z); }
+      void main(){
+        float m = n3(vP*2.2)*0.6 + n3(vP*5.0)*0.3 + n3(vP*11.0)*0.1;           /* 海（暗い所）と高地の濃淡。模様は作り物 */
+        float near = smoothstep(-0.2, 0.9, vP.z);                                 /* 地球を向く面（+Z）に海を多めに */
+        vec3 base = mix(vec3(0.78,0.77,0.74), vec3(0.42,0.42,0.43), smoothstep(0.48, 0.62, m) * (0.45 + 0.55*near));
+        float d = max(dot(normalize(vN), normalize(uSun)), 0.0);
+        gl_FragColor = vec4(base * (0.035 + 1.05 * pow(d, 0.85)), 1.0);          /* 0.035 は地球照（地球の照り返し）のつもりのわずかな明るさ */
+      }`,
+  });
+  const mesh = new THREE.Mesh(new THREE.SphereGeometry(SIZE, 48, 32), mat);
+  mesh.visible = false; scene.add(mesh);
+  const tag = document.createElement("div"); tag.id = "moontag"; tag.hidden = true; document.body.appendChild(tag);
+  const v = new THREE.Vector3(), fw = new THREE.Vector3(), Y = new THREE.Vector3(0, 1, 0);
+  const S = x => Math.sin(x * D2R);
+  /** 月の位置（地心・黄道）と月齢。d は 2000年1月1日12時からの日数 */
+  function moon(ms) {
+    const d = ms / 86400000 + 2440587.5 - 2451545.0;
+    const L = 218.316 + 13.176396 * d, M = 134.963 + 13.064993 * d, F = 93.272 + 13.229350 * d, D = 297.850 + 12.190749 * d, Ms = 357.529 + 0.98560028 * d;
+    const lam = L + 6.289 * S(M) + 1.274 * S(2 * D - M) + 0.658 * S(2 * D) + 0.214 * S(2 * M) - 0.186 * S(Ms) - 0.114 * S(2 * F);
+    const bet = 5.128 * S(F) + 0.281 * S(M + F) + 0.278 * S(M - F) + 0.173 * S(2 * D - F);
+    const km = 385001 - 20905 * Math.cos(M * D2R) - 3699 * Math.cos((2 * D - M) * D2R) - 2956 * Math.cos(2 * D * D2R);
+    const Ls = 280.460 + 0.9856474 * d, lamSun = Ls + 1.915 * S(Ms) + 0.020 * S(2 * Ms);
+    const e = EARTH.axialTiltDeg * D2R, lr = lam * D2R, br = bet * D2R;
+    const x = Math.cos(br) * Math.cos(lr), y = Math.cos(br) * Math.sin(lr), z = Math.sin(br);
+    const ye = y * Math.cos(e) - z * Math.sin(e), ze = y * Math.sin(e) + z * Math.cos(e);
+    const age = (((lam - lamSun) % 360 + 360) % 360) / 360 * 29.530589;
+    return { ra: Math.atan2(ye, x) / D2R, dec: Math.asin(ze) / D2R, km, age };
+  }
+  let last = null;
+  return {
+    get info() { return last; },
+    /** k：出し具合（0〜1）。spin：回した角度。演出の時間は、回した角度から「地球が何日ぶん回ったか」で進める */
+    tick(k, spin) {
+      const show = k > 0.5; mesh.visible = show; if (!show) { tag.hidden = true; return; }
+      const t = Clock.now().getTime() + (-spin / (2 * Math.PI)) * 86164000;   /* 恒星日（約23時間56分）で1回転 */
+      const m = moon(t); last = m;
+      const p = [0, 0, 0]; toXYZ(m.dec, m.ra, R_DRAW * m.km / KM_MEAN, p, 0);
+      mesh.position.set(p[0], p[1], p[2]).applyAxisAngle(Y, -gmstDeg(Clock.now()) * D2R + spin);
+      mesh.lookAt(0, 0, 0);                                                     /* いつも同じ面を地球に向ける（本物どおり） */
+      const cd = mesh.position.distanceTo(camera.position); mesh.visible = cd > 0.7;   /* カメラにぶつかるほど近いときは出さない */
+      /* 画面の外にいるときは、端に「月」の矢印を出す */
+      camera.getWorldDirection(fw);
+      const front = fw.dot(v.copy(mesh.position).sub(camera.position)) > 0;
+      v.copy(mesh.position).project(camera);
+      let x = v.x, y = v.y, inside = front && Math.abs(x) < 0.92 && Math.abs(y) < 0.92;
+      if (inside) { tag.hidden = true; return; }
+      if (!front) { x = -x; y = -y; }
+      const mx = Math.max(Math.abs(x), Math.abs(y), 1e-6), f = 0.86 / mx; x *= f; y *= f;
+      const w = stage.clientWidth, hh = stage.clientHeight, ang = Math.atan2(-y, x) / D2R;
+      tag.style.left = `${(x + 1) / 2 * w}px`; tag.style.top = `${(1 - y) / 2 * hh}px`;
+      tag.innerHTML = `<i style="transform:rotate(${ang.toFixed(0)}deg)">➤</i><span>月</span>`;
+      tag.hidden = false;
+    },
+  };
+})();
 const Rotate = (() => {
   const Y = new THREE.Vector3(0, 1, 0), SPEEDS = { slow: 10, mid: 30, fast: 60 };   /* 画面の1秒で、地球の何分ぶん回すか */
   let on = false, speed = "mid", pauseUntil = 0, satWas = false, onChange = null;
-  let tiltK = 0; const EP = new THREE.Vector3(), UP = new THREE.Vector3(), D = new THREE.Vector3(), YP = new THREE.Vector3();
+  let tiltK = 0, badgeAt = 0; const EP = new THREE.Vector3(), UP = new THREE.Vector3(), D = new THREE.Vector3(), YP = new THREE.Vector3();
   const el = renderer.domElement;
   el.addEventListener("pointerdown", () => { pauseUntil = Infinity; });
   const resume = () => { if (pauseUntil === Infinity) pauseUntil = performance.now() + 2500; };
@@ -1258,7 +1325,7 @@ const Rotate = (() => {
       const bd = document.getElementById("spinbadge");
       if (bd) {
         if (on) { const ss = subsolarPoint(Clock.now()), la = Math.abs(ss.lat).toFixed(1);
-          bd.innerHTML = `<b>↻ 自転（オブジェ表示）</b><br>地軸の傾き ${EARTH.axialTiltDeg.toFixed(1)}°・向きは今日の本物<br>太陽の真下 ${ss.lat >= 0 ? "北緯" : "南緯"}${la}°（${ss.lat >= 0 ? "北" : "南"}半球が夏の側）<br><span>速さと昼夜の位置は演出です</span>`; }
+          bd.innerHTML = `<b>↻ 自転（オブジェ表示）</b><br>地軸の傾き ${EARTH.axialTiltDeg.toFixed(1)}°・向きは今日の本物<br>太陽の真下 ${ss.lat >= 0 ? "北緯" : "南緯"}${la}°（${ss.lat >= 0 ? "北" : "南"}半球が夏の側）<br><span id="moonline">月</span><br><span>速さと昼夜の位置は演出。月は距離だけ縮めています（本物は地球の約60倍の遠さ）</span>`; }
         bd.hidden = !on;
       }
       document.body.classList.toggle("objet", on);   /* オブジェ表示：下の帯と操作の案内を隠す（歯車・回すボタン・左上の注意書きは残す） */
@@ -1279,6 +1346,8 @@ const Rotate = (() => {
         if (len < 0.3) { YP.copy(Y).addScaledVector(D, -Y.dot(D)).normalize(); UP.normalize().lerp(YP, 1 - len / 0.3); }
         camera.up.copy(UP.normalize());
       }
+      MoonLayer.tick(tiltK, spinAngle);
+      if (on && now - badgeAt > 1000) { badgeAt = now; const m = MoonLayer.info, el = document.getElementById("moonline"); if (m && el) el.textContent = `月　月齢 約${m.age.toFixed(1)}・いまの距離 約${(m.km / 10000).toFixed(1)}万km`; }
       if (!on || now < pauseUntil) return;
       const a = -(SPEEDS[speed] / 1440) * 2 * Math.PI * (dt / 1000);   /* 1440分＝1日で1周 */
       camera.position.applyAxisAngle(Y, a); camera.lookAt(0, 0, 0);
@@ -1536,7 +1605,7 @@ if (MapLayer) {
     box.querySelector(".spinspd").hidden = !on;
     box.querySelectorAll("[data-spinspd]").forEach(x => x.setAttribute("aria-pressed", String(x.dataset.spinspd === Rotate.speed)));
     const nt = box.querySelector(".spin-note"); nt.hidden = !on;
-    nt.innerHTML = `<b>自転の演出</b>：太陽を止めたまま、地球を西から東へ回しています。本当の速さ（1時間に15°、1周24時間）ではなく、${SPIN_TXT[Rotate.speed]}。画面の上を、地球が太陽を回る面の北に合わせているので、地軸が本物どおり約23.4°傾いて見えます（傾いている向きは今日の位置。真横から見ると一番よく傾いて見え、地軸がこちら向き・向こう向きに倒れている方向から見ると、まっすぐに見えます）。回している間の昼と夜の位置は、本当の時刻とは合いません（やめると本当の位置に戻ります）。雲・風・地震などのデータは地球に付いたまま一緒に回るので、データの時刻は変わりません。${SatLayer ? "人工衛星は「いま」の位置で飛んでいるので、回している間はお休みです。" : ""}触ると止まり、離すとまた回ります`;
+    nt.innerHTML = `<b>自転の演出</b>：太陽を止めたまま、地球を西から東へ回しています。本当の速さ（1時間に15°、1周24時間）ではなく、${SPIN_TXT[Rotate.speed]}。画面の上を、地球が太陽を回る面の北に合わせているので、地軸が本物どおり約23.4°傾いて見えます（傾いている向きは今日の位置。真横から見ると一番よく傾いて見え、地軸がこちら向き・向こう向きに倒れている方向から見ると、まっすぐに見えます）。月は式で計算した本物の向き・満ち欠けで、いつも同じ面を地球に向けています（距離だけ縮めて描いています。本物は地球の半径の約60倍の遠さ。大きさの比は本物。表面の模様は作り物）。画面の外にいるときは、端に「➤ 月」と方向を出します。回している間の昼と夜の位置は、本当の時刻とは合いません（やめると本当の位置に戻ります）。雲・風・地震などのデータは地球に付いたまま一緒に回るので、データの時刻は変わりません。${SatLayer ? "人工衛星は「いま」の位置で飛んでいるので、回している間はお休みです。" : ""}触ると止まり、離すとまた回ります`;
     const sc = box.querySelector('[data-chip="sats"]'); if (sc) sc.disabled = on || (NamesMode && !NAMES_OK.includes("sats"));
     const cb = document.getElementById("t-sats"); if (cb) { cb.disabled = on; cb.checked = !!SatLayer?.visible; }
     syncChips();

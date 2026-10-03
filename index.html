@@ -90,6 +90,11 @@
   .peek,.hint{transition:opacity .6s}
   body.objet .peek,body.objet .hint,body.objet .peek-pick{opacity:0!important;pointer-events:none}
   #spinbadge[hidden]{display:none}
+  #spinbadge span:last-child{white-space:normal;display:inline-block;max-width:250px;line-height:1.5}
+  #spinbadge #moonline{color:var(--ink-soft)}
+  #moontag{position:fixed;z-index:3;transform:translate(-50%,-50%);pointer-events:none;display:flex;align-items:center;gap:3px;font-size:11px;color:rgba(230,228,220,.85);text-shadow:0 0 4px #000}
+  #moontag[hidden]{display:none}
+  #moontag i{font-style:normal;font-size:12px;display:inline-block;color:rgba(230,228,220,.75)}
   .chips button[aria-pressed="true"]{color:var(--ink);border-color:color-mix(in srgb,var(--accent) 55%,transparent);background:rgba(143,227,212,.10)}
   .meter{position:fixed;left:16px;top:calc(62px + env(safe-area-inset-top,0px));font-family:var(--mono);font-size:11px;line-height:1.55;color:var(--ink-soft);background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:8px 10px;font-variant-numeric:tabular-nums;min-width:150px}
   .meter div{display:flex;justify-content:space-between;gap:14px}
