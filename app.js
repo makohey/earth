@@ -1005,7 +1005,7 @@ const SAT_STYLE = {
 const satR = alt => 1 + 0.108 * Math.log(1 + Math.max(0, alt) / 500);
 function createSatLayer() {
   const id = Catalog.has("sats") ? "sats" : "iss", meta = Catalog.meta(id), raw = Catalog.rows(id);
-  const list = id === "sats" ? raw.sats : [{ id: "iss", kind: "station", name: "ISS (ZARYA)", ja: "ISS（国際宇宙ステーション）", label: "ISS NOW", t0: raw.t0, step: raw.step, pts: raw.pts }];
+  const list = id === "sats" ? raw.sats.map(t => t.label === "ISS NOW" ? { ...t, label: "ISS" } : t) /* 名前だけの表記にそろえる（取得済みのデータにも効くよう、ここでも直す） */ : [{ id: "iss", kind: "station", name: "ISS (ZARYA)", ja: "ISS（国際宇宙ステーション）", label: "ISS", t0: raw.t0, step: raw.step, pts: raw.pts }];
   const sats = list.filter(t => SAT_STYLE[t.kind] && t.pts.length > 1).map(t => { const xyz = new Float32Array(t.pts.length * 3); t.pts.forEach(([la, lo, al], i) => toXYZ(la, lo, satR(al), xyz, i * 3)); return { ...t, st: SAT_STYLE[t.kind], xyz, cur: null }; });
   const at = (s, ms) => { const n = s.pts.length, f = (ms / 1000 - s.t0) / s.step; if (f < 0 || f > n - 1) return null;
     const i = Math.min(n - 2, Math.floor(f)), t = f - i, o = [0, 0, 0];

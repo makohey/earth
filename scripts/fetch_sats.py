@@ -28,7 +28,7 @@ R_EARTH = 6371.0
 
 # 個別に取る衛星（NORAD 番号）
 SINGLE = [
-    {"catnr": 25544, "id": "iss", "kind": "station", "ja": "ISS（国際宇宙ステーション）", "label": "ISS NOW"},
+    {"catnr": 25544, "id": "iss", "kind": "station", "ja": "ISS（国際宇宙ステーション）", "label": "ISS"},
     {"catnr": 48274, "id": "css", "kind": "station", "ja": "天宮（中国の宇宙ステーション）", "label": "天宮"},
     {"catnr": 20580, "id": "hst", "kind": "telescope", "ja": "ハッブル宇宙望遠鏡", "label": "ハッブル"},
     {"catnr": 41836, "id": "himawari9", "kind": "weather", "ja": "ひまわり9号（気象衛星）", "label": "ひまわり"},
