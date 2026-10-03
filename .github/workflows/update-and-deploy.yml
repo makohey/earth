@@ -154,6 +154,16 @@ jobs:
       - uses: actions/cache/restore@v6
         if: steps.reuse.outputs.deploy == 'true'
         with:
+          path: qhist_cache
+          key: qhist-${{ github.run_id }}
+          restore-keys: qhist-
+      - name: 過去の地震の深さ（USGS カタログ M5 以上 1990〜2025、一度だけ）
+        if: steps.reuse.outputs.deploy == 'true'
+        continue-on-error: true
+        run: python scripts/fetch_quake_history.py --latest _site/data/latest --cache qhist_cache
+      - uses: actions/cache/restore@v6
+        if: steps.reuse.outputs.deploy == 'true'
+        with:
           path: currents_cache
           key: currents-${{ github.run_id }}
           restore-keys: currents-
@@ -176,6 +186,11 @@ jobs:
         with:
           path: volc_cache
           key: volc-${{ github.run_id }}
+      - uses: actions/cache/save@v6
+        if: steps.reuse.outputs.deploy == 'true' && hashFiles('qhist_cache/*') != ''
+        with:
+          path: qhist_cache
+          key: qhist-${{ github.run_id }}
       - uses: actions/cache/save@v6
         if: steps.reuse.outputs.deploy == 'true' && hashFiles('currents_cache/*') != ''
         with:

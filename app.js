@@ -177,12 +177,14 @@ function buildLandMask() {
 const sunDir = new THREE.Vector3();
 let spinAngle = 0;   /* 自転の演出で回した角度（ラジアン。西回りなので負）。星の枠もこの分だけ回す */
 const globe = new THREE.Mesh(new THREE.SphereGeometry(1, 128, 96), new THREE.ShaderMaterial({
-  uniforms: { uLand: { value: buildLandMask() }, uSun: { value: sunDir }, uNight: { value: 1 }, uLights: { value: null }, uLightsOn: { value: 0 }, uIce: { value: null }, uIceOn: { value: 0 }, uBathy: { value: null }, uBathyOn: { value: 0 } },
+  uniforms: { uLand: { value: buildLandMask() }, uSun: { value: sunDir }, uNight: { value: 1 }, uLights: { value: null }, uLightsOn: { value: 0 }, uIce: { value: null }, uIceOn: { value: 0 }, uBathy: { value: null }, uBathyOn: { value: 0 }, uCut: { value: 0 }, uN1: { value: new THREE.Vector3() }, uN2: { value: new THREE.Vector3() } },
   vertexShader: `varying vec3 vPos; void main(){ vPos = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
   fragmentShader: `
     uniform sampler2D uLand; uniform sampler2D uLights; uniform sampler2D uIce; uniform float uIceOn; uniform sampler2D uBathy; uniform float uBathyOn; uniform vec3 uSun; uniform float uNight; uniform float uLightsOn; varying vec3 vPos;
+    uniform float uCut; uniform vec3 uN1; uniform vec3 uN2;
     const float PI = 3.141592653589793;
     void main(){
+      if (uCut > 0.5 && dot(vPos, uN1) > 0.0 && dot(vPos, uN2) > 0.0) discard;   /* 地球の中（断面）：切り取った部分 */
       vec3 n = normalize(vPos);
       float lat = asin(clamp(n.y,-1.0,1.0)), lon = atan(-n.z, n.x);
       float land = texture2D(uLand, vec2((lon+PI)/(2.0*PI), (lat+PI*0.5)/PI)).r;
@@ -1089,7 +1091,8 @@ if (ON && (Catalog.has("sats") || Catalog.has("iss"))) { try { SatLayer = create
   const pos = new Float32Array(seg.length * 3);
   seg.forEach(([lo, la], k) => toXYZ(la, lo, 1.0012, pos, k * 3));
   const geo = new THREE.BufferGeometry(); geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-  scene.add(new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: 0xa9b8d6, transparent: true, opacity: 0.28 })));
+  const coast = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: 0xa9b8d6, transparent: true, opacity: 0.28 }));
+  scene.add(coast); window.__coast = coast;   /* 地球の中（断面）で切り口の上の海岸線を消すために参照を残す */
 })();
 
 /* ===== 見せる粒子（表示専用）：軌跡はGPUの中で年齢から薄くする =====
@@ -1349,6 +1352,112 @@ const CurrentLayer = (() => {
     },
     tick(dt) { if (on && built) { step(Math.min(dt / 16.667, 3)); tickLabels(); } },
     resize() { if (mat) renderer.getDrawingBufferSize(mat.uniforms.uRes.value); },
+  };
+})();
+
+/* ===== 地球の中（断面）：地球を4分の1切り取り、切り口に中のつくりを描く =====
+   ・層の深さ：地震波から作られた標準モデル PREM（Dziewonski & Anderson 1981）。地殻〜24km・410km・660km・核とマントルの境 2,891km・内核の境 5,150km
+   ・切り口の色：深さごとの温度の推定（文献の代表的な値。幅がある）。「こう考えられている」の位置づけ
+   ・切り取った中に、過去の地震（M5以上）を本当の深さで置く。沈み込んだ海のプレートの形が浮かぶ
+   ・切る場所：日本を東西に通る断面（北緯38°・東経142°を通る大円）と、東経100°の子午線。日本の下へ沈み込むプレートが見える向き */
+renderer.localClippingEnabled = true;
+const InteriorLayer = (() => {
+  const P = new THREE.Vector3(), tmp = [0, 0, 0];
+  toXYZ(38, 142, 1, tmp, 0); P.set(...tmp);
+  const la = 38 * D2R, lo = 142 * D2R, lo2 = 100 * D2R;
+  const n1 = new THREE.Vector3(-Math.sin(la) * Math.cos(lo), Math.cos(la), Math.sin(la) * Math.sin(lo)).normalize();   /* 断面1の法線＝その地点の北向き */
+  const n2 = new THREE.Vector3(-Math.sin(lo2), 0, -Math.cos(lo2)).normalize();                                       /* 断面2の法線＝東経100°の東向き（日本が断面1のまん中寄りに来るように） */
+  const clip = [new THREE.Plane(n1.clone().negate(), 0), new THREE.Plane(n2.clone().negate(), 0)];
+  /* 深さ（km）と温度（℃）の目安。地表 15 → 地殻の底 約500 → プレートの底(100km) 約1,300 → 410km 約1,500 → 660km 約1,600
+     → 核の上(2,700km) 約2,500 → 核とマントルの境 約3,700 → 内核の境 約5,000 → 中心 約5,400（推定に数百℃の幅） */
+  const R0 = 6371, GEO = [[0, 15], [24, 500], [100, 1300], [410, 1500], [660, 1600], [2700, 2500], [2891, 3700], [5150, 5000], [6371, 5400]];
+  const faceMat = other => new THREE.ShaderMaterial({
+    uniforms: { uOther: { value: other }, uSun: { value: sunDir } }, side: THREE.DoubleSide,
+    vertexShader: `varying vec3 vW; void main(){ vW = (modelMatrix * vec4(position, 1.0)).xyz; gl_Position = projectionMatrix * viewMatrix * vec4(vW, 1.0); }`,
+    fragmentShader: `uniform vec3 uOther; varying vec3 vW;
+      float temp(float d){ ${GEO.slice(1).map(([d, t], i) => `if (d < ${d.toFixed(1)}) return mix(${GEO[i][1].toFixed(1)}, ${t.toFixed(1)}, (d - ${GEO[i][0].toFixed(1)}) / ${(d - GEO[i][0]).toFixed(1)});`).join(" ")} return 5400.0; }
+      vec3 heat(float t){                                                /* 温度の色：暗い赤 → 赤 → 橙 → 黄 → 白っぽい黄 */
+        if (t < 1300.0) return mix(vec3(0.16,0.06,0.05), vec3(0.50,0.11,0.06), t / 1300.0);
+        if (t < 2500.0) return mix(vec3(0.50,0.11,0.06), vec3(0.74,0.25,0.08), (t - 1300.0) / 1200.0);
+        if (t < 3699.0) return mix(vec3(0.74,0.25,0.08), vec3(0.88,0.42,0.12), (t - 2500.0) / 1200.0);
+        return mix(vec3(1.00,0.70,0.28), vec3(1.00,0.95,0.78), clamp((t - 3700.0) / 1700.0, 0.0, 1.0));   /* 核は一段明るく（境目で温度が跳ぶ） */
+      }
+      void main(){
+        if (dot(vW, uOther) < 0.0) discard;                              /* 切り口の半円だけ */
+        float r = length(vW); if (r > 1.0) discard;
+        float d = (1.0 - r) * ${R0.toFixed(1)};
+        vec3 col = heat(temp(d));
+        float line = 0.0;                                                /* 層の境目に細い線 */
+        for (int i = 0; i < 5; i++) { float b = i == 0 ? 24.0 : i == 1 ? 410.0 : i == 2 ? 660.0 : i == 3 ? 2891.0 : 5150.0;
+          line = max(line, 1.0 - smoothstep(0.0, 9.0 + float(i) * 3.0, abs(d - b))); }
+        col = mix(col, d > 2800.0 ? vec3(0.55, 0.22, 0.06) : vec3(1.0, 0.95, 0.85), line * 0.6);   /* 核の中は暗い線で */
+        col *= 0.92 + 0.08 * r;
+        gl_FragColor = vec4(col, 1.0);
+      }`,
+  });
+  const face = (normal, other) => {
+    const m = new THREE.Mesh(new THREE.CircleGeometry(1, 160), faceMat(other));
+    m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal); m.visible = false; m.renderOrder = 0.5; scene.add(m); return m;
+  };
+  const f1 = face(n1, n2), f2 = face(n2, n1);
+  /* 名札：断面1の上に、層の名前と境目の深さ・温度の目安 */
+  const labels = new THREE.Group(); labels.visible = false; scene.add(labels);
+  const along = (deg, r) => { const q = new THREE.Quaternion().setFromAxisAngle(n1, deg * D2R);   /* 正の角度＝東へ（切り口の上） */ return P.clone().applyQuaternion(q).multiplyScalar(r); };
+  const addLabel = (text, color, v, px = 11.5) => { const sp = makeTextSprite(text, color, 500, px); sp.position.copy(v); labels.add(sp); };
+  addLabel("上部マントル", "rgba(255,226,200,0.95)", along(20, 0.95));
+  addLabel("下部マントル", "rgba(255,226,200,0.95)", along(20, 0.72));
+  addLabel("外核（液体の鉄）", "rgba(255,250,240,0.98)", along(20, 0.40));
+  addLabel("内核（固体の鉄）約5,400℃", "rgba(255,250,240,0.98)", along(20, 0.06));
+  addLabel("660km　約1,600℃", "rgba(230,230,240,0.85)", along(118, 1 - 660 / R0), 10.5);
+  addLabel("2,900km　約3,700℃", "rgba(230,230,240,0.85)", along(118, 1 - 2891 / R0), 10.5);
+  addLabel("5,150km　約5,000℃", "rgba(245,245,250,0.9)", along(118, 1 - 5150 / R0), 10.5);
+  addLabel("日本（北緯38°）", "rgba(170,200,255,0.95)", P.clone().multiplyScalar(1.06), 11);
+  /* 過去の地震（M5以上）を本当の深さで。色＝深さ（浅い 橙 → 中くらい 黄緑 → 深い 青紫）、大きさ＝マグニチュード */
+  let quakes = null;
+  async function loadQuakes() {
+    if (quakes || !Catalog.has("quake-history")) return;
+    await Catalog.load("quake-history");
+    const raw = Catalog.grid("quake-history").raw, n = raw.length / 4;
+    const pos = new Float32Array(n * 3), dep = new Float32Array(n), mag = new Float32Array(n);
+    for (let i = 0; i < n; i++) { const d = raw[4*i+2]; toXYZ(raw[4*i] / 100, raw[4*i+1] / 100, 1 - d / R0, pos, i * 3); dep[i] = d; mag[i] = raw[4*i+3] / 10; }
+    const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.BufferAttribute(pos, 3)); g.setAttribute("aDep", new THREE.BufferAttribute(dep, 1)); g.setAttribute("aMag", new THREE.BufferAttribute(mag, 1));
+    quakes = new THREE.Points(g, new THREE.ShaderMaterial({
+      uniforms: { uPR: { value: renderer.getPixelRatio() }, uN1: { value: n1 }, uN2: { value: n2 } }, transparent: true, depthWrite: false,
+      vertexShader: `attribute float aDep; attribute float aMag; uniform float uPR; uniform vec3 uN1; uniform vec3 uN2; varying float vD; varying float vIn;
+        void main(){ vD = aDep; vIn = (dot(position, uN1) > 0.0 && dot(position, uN2) > 0.0) ? 1.0 : 0.0;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); gl_PointSize = (1.6 + 1.5 * max(aMag - 5.0, 0.0)) * uPR * vIn * (aDep < 70.0 ? 0.7 : 1.0); }`,
+      fragmentShader: `varying float vD; varying float vIn;
+        void main(){ if (vIn < 0.5) discard; vec2 p = gl_PointCoord - 0.5; float r = length(p); if (r > 0.5) discard;
+          vec3 c = vD < 70.0 ? vec3(1.0,0.62,0.25) : vD < 300.0 ? mix(vec3(0.95,0.92,0.35), vec3(0.45,0.95,0.55), (vD - 70.0) / 230.0) : mix(vec3(0.40,0.75,1.0), vec3(0.70,0.50,1.0), clamp((vD - 300.0) / 400.0, 0.0, 1.0));
+          gl_FragColor = vec4(c, (1.0 - smoothstep(0.3, 0.5, r)) * (vD < 70.0 ? 0.35 : 0.95)); }`,   /* 浅い地震は控えめに（深い列を見やすく） */
+    }));
+    quakes.frustumCulled = false; quakes.renderOrder = 3; quakes.visible = on; scene.add(quakes);
+  }
+  let on = false, onChange = null, camWas = null;
+  const cam = new THREE.Vector3();
+  return {
+    get visible() { return on; }, set onChange(f) { onChange = f; },
+    get info() { return Catalog.has("quake-history") ? Catalog.meta("quake-history") : null; },
+    async setOn(v) {
+      v = !!v; if (v === on) return; on = v;
+      globe.material.uniforms.uCut.value = on ? 1 : 0; globe.material.uniforms.uN1.value.copy(n1); globe.material.uniforms.uN2.value.copy(n2);
+      f1.visible = f2.visible = labels.visible = on;
+      const coast = window.__coast; if (coast) { coast.material.clippingPlanes = on ? clip : null; coast.material.clipIntersection = true; coast.material.needsUpdate = true; }
+      if (on) {                                                          /* 切り口の正面へ回り込む（やめると元の場所へ） */
+        camWas = camera.position.clone();
+        camera.position.copy(n1.clone().add(n2.clone().multiplyScalar(0.18)).add(P.clone().multiplyScalar(0.22)).normalize().multiplyScalar(Math.max(3.6, camera.position.length())));   /* 日本を通る断面をほぼ正面から */
+        camera.lookAt(0, 0, 0);
+      } else if (camWas) { camera.position.copy(camWas); camera.lookAt(0, 0, 0); camWas = null; }
+      onChange?.(on);
+      if (on) { try { await loadQuakes(); } catch (e) { console.warn("過去の地震を読めませんでした", e); } }
+      if (quakes) quakes.visible = on;
+    },
+    tick() {
+      if (!on) return;
+      const h = stage.clientHeight || 800; cam.copy(camera.position);
+      const front = cam.dot(n1) > 0.05;                                  /* 断面1が見える側にいるときだけ名札を出す */
+      for (const sp of labels.children) { sp.visible = front; if (front) { const k = sp.userData.px / h * 2 * Math.tan(camera.fov / 2 * D2R); sp.scale.set(k * sp.userData.aspect, k, 1); } }
+    },
   };
 })();
 
@@ -1658,6 +1767,7 @@ if (MapLayer) {
     { key: "sst-anom", label: "海水温（平年差）", get: () => layerById("sst-anom")?.visible, set: v => setLayer("sst-anom", v) },
     { key: "sea-ice", label: "海氷", get: () => layerById("sea-ice")?.visible, set: v => setLayer("sea-ice", v) },
     { key: "quakes", label: "地震", get: () => layerById("quakes")?.visible, set: v => setLayer("quakes", v) },
+    { key: "interior", label: "地球の中（断面）", get: () => InteriorLayer.visible, set: v => InteriorLayer.setOn(v) },
     { key: "volcanoes", label: "火山", get: () => layerById("volcanoes")?.visible, set: v => setLayer("volcanoes", v) },
     { key: "sats", label: "人工衛星", get: () => layerById("sats")?.visible, set: v => setLayer("sats", v) },
     { key: "aurora", label: "オーロラ帯", get: () => AuroraLayer?.visible, set: v => { if (AuroraLayer) { AuroraLayer.visible = v; AuroraLayer.userOn = v; } } },
@@ -1667,7 +1777,7 @@ if (MapLayer) {
     { key: "capitals", label: "★ 首都", get: () => CapitalLayer?.visible, set: v => { if (CapitalLayer) CapitalLayer.visible = v; } },
     { key: "map", label: "国境・地名", get: () => MapLayer.visible, set: v => { MapLayer.visible = v; box.querySelector(".viewbox").hidden = !v; } },
     { key: "sky", label: "✦ 星座", get: () => SkyLayer?.visible, set: v => { if (SkyLayer) SkyLayer.visible = v; } },
-  ].filter(c => c.key === "wind" || c.key === "map" || (c.key === "currents" ? !!CurrentLayer : false) || ((c.key === "sky" || c.key === "milky") ? !!SkyLayer : c.key === "guide" ? !!GuideLayer : c.key === "aurora" ? !!AuroraLayer : c.key === "plates" ? !!PlateLayer : c.key === "capitals" ? !!CapitalLayer : !!layerById(c.key)));
+  ].filter(c => c.key === "wind" || c.key === "map" || c.key === "interior" || (c.key === "currents" ? !!CurrentLayer : false) || ((c.key === "sky" || c.key === "milky") ? !!SkyLayer : c.key === "guide" ? !!GuideLayer : c.key === "aurora" ? !!AuroraLayer : c.key === "plates" ? !!PlateLayer : c.key === "capitals" ? !!CapitalLayer : !!layerById(c.key)));
   /* 見方のセット（プリセット）：物語ごとに、関係が見える組み合わせをまとめて出す。そこから1つずつ足し引きもできる。
      国境・地名、赤道・日付変更線は「下敷き」なので、セットでは変えない */
   const PRESETS = [
@@ -1687,7 +1797,7 @@ if (MapLayer) {
   const GROUPS = [
     { key: "air", en: "AIR", ja: "空気", keys: ["wind", "rain", "cloud-ir", "pressure"] },
     { key: "sea", en: "SEA", ja: "海", keys: ["currents", "sst-anom", "sea-ice"] },
-    { key: "earth", en: "EARTH", ja: "大地", keys: ["quakes", "volcanoes", "plates"] },
+    { key: "earth", en: "EARTH", ja: "大地", keys: ["interior", "quakes", "volcanoes", "plates"] },
     { key: "space", en: "SPACE", ja: "宇宙", keys: ["sats", "aurora", "milky", "sky"] },
     { key: "map", en: "MAP", ja: "地図", keys: ["map", "capitals", "guide"] },
   ];
@@ -1720,6 +1830,28 @@ if (MapLayer) {
   /* 海流：出している間は風の線をお休みにする（消したのではなく、やめると元に戻す） */
   const seaB = grpBody("sea");
   if (seaB && CurrentLayer) seaB.insertAdjacentHTML("beforeend", `<p class="note cur-note" hidden><b>海流（いつもの流れ）</b>：今日の海流ではなく、漂流ブイの何十年ぶんの記録から作った<b>${CurrentLayer.meta.month}月のいつもの流れ</b>です。線の色＝水温（同じ記録の平年値）：<span style="color:rgb(64,140,255)">青 冷たい</span> → <span style="color:rgb(150,240,215)">緑がかった白</span> → <span style="color:rgb(255,150,64)">橙</span> → <span style="color:rgb(255,77,64)">赤 温かい</span>。暖流（黒潮・メキシコ湾流など）は温かい水を極の方へ、寒流（親潮・カリフォルニア海流など）は冷たい水を赤道の方へ運びます。流れる速さは見やすさのための倍率（本物は速い所で秒速1〜2m）。海流の名札は「だいたいこの辺を流れる」目安の位置で、文字の色は<span style="color:rgb(255,176,110)">暖流＝橙</span>・<span style="color:rgb(125,200,255)">寒流＝水色</span>。拡大すると名札が増えます。出している間、風の線はお休みです</p>`);
+  /* 地球の中（断面）：入る前の層の状態を覚えて全部しまい、ほかのボタンは押せなくする。出るときに元へ戻す */
+  const earthB = grpBody("earth");
+  if (earthB) earthB.insertAdjacentHTML("beforeend", `<p class="note int-note" hidden><b>地球の中（断面）</b>：日本を東西に通る断面と、東経125°の断面で、地球を4分の1切り取っています。層の深さは地震波から作られた標準モデル（PREM）、切り口の色は深さごとの温度の推定（文献の代表的な値で、数百℃の幅があります）。切り取った中の点は、1990〜2025年の M5.0 以上の地震を本当の深さに置いたものです（色＝深さ：<span style="color:rgb(255,158,64)">橙 浅い〜70km</span>／<span style="color:rgb(160,240,120)">黄緑 70〜300km</span>／<span style="color:rgb(130,170,255)">青紫 300km〜</span>）。日本の下で、点が斜めに深くなっていく列が、沈み込んだ海のプレートだと考えられています。中の動き（マントル対流など）は、まだ入れていません</p>`);
+  let intSaved = null;
+  const intSync = on => {
+    box.querySelectorAll("[data-chip]").forEach(b => { if (b.dataset.chip !== "interior") b.disabled = on; });
+    box.querySelectorAll("[data-mode],[data-preset],[data-myset],[data-wname],[data-wdir],[data-wlev]").forEach(b => { b.disabled = on; });
+    const nt = box.querySelector(".int-note"); if (nt) nt.hidden = !on;
+  };
+  InteriorLayer.onChange = on => {
+    if (on) {
+      intSaved = Object.fromEntries(CHIPS.filter(c => c.key !== "interior").map(c => [c.key, !!c.get()]));
+      for (const c of CHIPS) if (c.key !== "interior" && c.key !== "sky" && c.key !== "milky" && c.get()) c.set(false);
+      VisualParticles.visible = false; for (const l of SCALAR_LAYERS) { l.visible = false; }
+      intSync(true);
+    } else {
+      intSync(false); setMode(curMode);                                 /* ボタンを戻し、モードの見た目に戻してから、入る前の層を戻す */
+      if (intSaved) for (const c of CHIPS) if (c.key !== "interior" && intSaved[c.key] !== undefined && !!c.get() !== intSaved[c.key]) c.set(intSaved[c.key]);
+      intSaved = null;
+    }
+    syncChips(); updateChip();
+  };
   let windWas = false;
   const curSync = () => {
     const on = !!CurrentLayer?.visible;
@@ -1916,7 +2048,7 @@ function loop(now) {
   const dt = Math.min(now - last, 100); last = now;
   frames.push(dt); if (frames.length > 120) frames.shift();
   if (VisualParticles.visible) VisualParticles.step(Math.min(dt / 16.667, 3));
-  CurrentLayer?.tick(dt);
+  CurrentLayer?.tick(dt); InteriorLayer.tick();
   for (const l of SCALAR_LAYERS) l.tick?.(); MapLayer?.tick(); CapitalLayer?.tick(); StateLayer?.tick(); SkyLayer?.tick(); GuideLayer?.tick(); AuroraLayer?.tick(now); ShakeRipples?.tick(now, !!FEATURE_LAYERS.find(l => l.id === "quakes")?.visible);
   Rotate.tick(now, dt); Spin.tick(); controls.update();
   for (const l of FEATURE_LAYERS) l.tick(camera.position.length());

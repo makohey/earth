@@ -23,6 +23,7 @@
 | 夜空：星・星座線・星座名（試作） | d3-celestial のデータ（BSD-3-Clause, © 2015 Olaf Frohn、全文 `data/sky/LICENSE-d3-celestial.txt`）。星は XHIP、星座は IAU の星座をもとにしたもの。`scripts/prep_sky.py` で変換 | BSD-3-Clause。天の川は輪郭データを使わず、銀河座標から計算したおおまかな帯 |
 | 海の深さ | Natural Earth 10m の水深帯（0〜10000 m）を `scripts/prep_map.py` で画像化 | パブリックドメイン。動かない地図 |
 | 海流（いつもの流れ） | NOAA AOML Global Drifter Program, Drifter-Derived Climatology of Global Near-Surface Currents（Laurindo et al. 2017） | 米国政府の公開データ。出典を表示。漂流ブイの記録から作った月平均で、今日の海流ではない |
+| 地球の中（断面） | 層の深さ：PREM（Dziewonski & Anderson 1981）。温度は文献の代表的な推定値。過去の地震：USGS Earthquake Hazards Program の地震カタログ（M5.0 以上） | 層と温度は「こう考えられている」モデル。地震は過去の記録で、予測ではない |
 | 海面水温の平年差 | NOAA NCEI Optimum Interpolation SST v2.1（日平均の anom） | 米国政府の公開データ。1日1枚、同じ日は取り直さない |
 | 人工衛星の位置 | CelesTrak の軌道要素（GP/TLE。ISS・天宮・ハッブル・ひまわり9号・GNSS グループの GPS／ガリレオ／みちびき）から SGP4（sgp4 ライブラリ・MIT）で計算 | 出典を表示。地球儀の時計ではなく「いま」の位置。高さは縮めて描画（順番は本物） |
 | 夜の街の灯り（試作） | NASA「Earth's City Lights」（three.js の例 `examples/textures/planets/earth_lights_2048.png` を白黒化） | NASA の画像（米国政府の著作物）。何年か前の合成画像で、今夜の灯りではない |
