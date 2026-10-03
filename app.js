@@ -1253,6 +1253,8 @@ const Rotate = (() => {
       v = !!v; if (v === on) return; on = v;
       if (on) { satWas = !!SatLayer?.visible; if (satWas) SatLayer.visible = false; }   /* 衛星は「いま」の位置で飛ぶので、早回しの間はお休み（止めたら元に戻す） */
       else { spinAngle = 0; realSun(); if (SatLayer && satWas) SatLayer.visible = true; satWas = false; }
+      const fab = document.getElementById("spinfab"); if (fab) { fab.setAttribute("aria-pressed", String(on)); fab.setAttribute("aria-label", on ? "地球を回すのをやめる" : "地球を回す（自転の演出）"); }
+      document.getElementById("spinbadge")?.toggleAttribute("hidden", !on);
       onChange?.(on);
     },
     tick(now, dt) {
@@ -1263,6 +1265,7 @@ const Rotate = (() => {
     },
   };
 })();
+document.getElementById("spinfab")?.addEventListener("click", () => { Rotate.on = !Rotate.on; });   /* 歯車の外の丸ボタン：押すたびに回す／止める（速さはパネルの中で） */
 function resize() { const w = stage.clientWidth, h = stage.clientHeight; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); }
 window.addEventListener("resize", resize); resize();
 
