@@ -1356,6 +1356,37 @@ const CurrentLayer = (() => {
   };
 })();
 
+/* ===== 過去の地震（深さ）：1990〜2025年の M5.0 以上を、地表の震央に深さの色で打つ =====
+   世界中で見ると、ほとんどがプレートの境目に並ぶ。海溝から陸側へ「橙（浅い）→黄緑→青紫（深い）」と並ぶ所は、
+   プレートがその向きへ沈み込んでいると考えられている所。断面と同じデータを使う（読み込みは一度だけ） */
+const QuakeHistLayer = (() => {
+  if (!Catalog.has("quake-history")) return null;
+  let pts = null, on = false;
+  async function build() {
+    await Catalog.load("quake-history");
+    const raw = Catalog.grid("quake-history").raw, n = raw.length / 4;
+    const pos = new Float32Array(n * 3), dep = new Float32Array(n), mag = new Float32Array(n);
+    for (let i = 0; i < n; i++) { toXYZ(raw[4*i] / 100, raw[4*i+1] / 100, 1.0016, pos, i * 3); dep[i] = raw[4*i+2]; mag[i] = raw[4*i+3] / 10; }
+    const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.BufferAttribute(pos, 3)); g.setAttribute("aDep", new THREE.BufferAttribute(dep, 1)); g.setAttribute("aMag", new THREE.BufferAttribute(mag, 1));
+    pts = new THREE.Points(g, new THREE.ShaderMaterial({
+      uniforms: { uPR: { value: renderer.getPixelRatio() }, uZoom: { value: 1 } }, transparent: true, depthWrite: false,
+      vertexShader: `attribute float aDep; attribute float aMag; uniform float uPR; uniform float uZoom; varying float vD;
+        void main(){ vD = aDep; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); gl_PointSize = (1.3 + 1.1 * max(aMag - 5.0, 0.0)) * uPR * uZoom; }`,
+      fragmentShader: `varying float vD;
+        void main(){ vec2 p = gl_PointCoord - 0.5; float r = length(p); if (r > 0.5) discard;
+          vec3 c = vD < 70.0 ? vec3(1.0,0.62,0.25) : vD < 300.0 ? mix(vec3(0.95,0.92,0.35), vec3(0.45,0.95,0.55), (vD - 70.0) / 230.0) : mix(vec3(0.40,0.75,1.0), vec3(0.70,0.50,1.0), clamp((vD - 300.0) / 400.0, 0.0, 1.0));
+          gl_FragColor = vec4(c, (1.0 - smoothstep(0.32, 0.5, r)) * (vD < 70.0 ? 0.55 : 0.9)); }`,
+    }));
+    pts.frustumCulled = false; pts.renderOrder = 3.05; pts.visible = on; scene.add(pts);
+  }
+  return {
+    get visible() { return on; },
+    get meta() { return Catalog.meta("quake-history"); },
+    async setOn(v) { on = !!v; if (on && !pts) { try { await build(); } catch (e) { console.warn("過去の地震を読めませんでした", e); on = false; } } if (pts) pts.visible = on; },
+    tick() { if (pts && on) pts.material.uniforms.uZoom.value = Math.min(1.8, Math.max(0.8, 3.2 / camera.position.length() + 0.5)); },   /* 近づくと少し大きく */
+  };
+})();
+
 /* ===== 地球の中（断面）：地球を4分の1切り取り、切り口に中のつくりを描く =====
    ・層の深さ：地震波から作られた標準モデル PREM（Dziewonski & Anderson 1981）。地殻〜24km・410km・660km・核とマントルの境 2,891km・内核の境 5,150km
    ・切り口の色：深さごとの温度の推定（文献の代表的な値。幅がある）。「こう考えられている」の位置づけ
@@ -1772,6 +1803,7 @@ if (MapLayer) {
     { key: "sst-anom", label: "海水温（平年差）", get: () => layerById("sst-anom")?.visible, set: v => setLayer("sst-anom", v) },
     { key: "sea-ice", label: "海氷", get: () => layerById("sea-ice")?.visible, set: v => setLayer("sea-ice", v) },
     { key: "quakes", label: "地震", get: () => layerById("quakes")?.visible, set: v => setLayer("quakes", v) },
+    { key: "quakehist", label: "過去の地震（深さ）", get: () => !!QuakeHistLayer?.visible, set: v => QuakeHistLayer?.setOn(v).then(() => typeof syncChips === "function" && syncChips()) },
     { key: "interior", label: "地球の中（断面）", get: () => InteriorLayer.visible, set: v => InteriorLayer.setOn(v) },
     { key: "volcanoes", label: "火山", get: () => layerById("volcanoes")?.visible, set: v => setLayer("volcanoes", v) },
     { key: "sats", label: "人工衛星", get: () => layerById("sats")?.visible, set: v => setLayer("sats", v) },
@@ -1782,7 +1814,7 @@ if (MapLayer) {
     { key: "capitals", label: "★ 首都", get: () => CapitalLayer?.visible, set: v => { if (CapitalLayer) CapitalLayer.visible = v; } },
     { key: "map", label: "国境・地名", get: () => MapLayer.visible, set: v => { MapLayer.visible = v; box.querySelector(".viewbox").hidden = !v; } },
     { key: "sky", label: "✦ 星座", get: () => SkyLayer?.visible, set: v => { if (SkyLayer) SkyLayer.visible = v; } },
-  ].filter(c => c.key === "wind" || c.key === "map" || c.key === "interior" || (c.key === "currents" ? !!CurrentLayer : false) || ((c.key === "sky" || c.key === "milky") ? !!SkyLayer : c.key === "guide" ? !!GuideLayer : c.key === "aurora" ? !!AuroraLayer : c.key === "plates" ? !!PlateLayer : c.key === "capitals" ? !!CapitalLayer : !!layerById(c.key)));
+  ].filter(c => c.key === "wind" || c.key === "map" || c.key === "interior" || (c.key === "quakehist" ? !!QuakeHistLayer : false) || (c.key === "currents" ? !!CurrentLayer : false) || ((c.key === "sky" || c.key === "milky") ? !!SkyLayer : c.key === "guide" ? !!GuideLayer : c.key === "aurora" ? !!AuroraLayer : c.key === "plates" ? !!PlateLayer : c.key === "capitals" ? !!CapitalLayer : !!layerById(c.key)));
   /* 見方のセット（プリセット）：物語ごとに、関係が見える組み合わせをまとめて出す。そこから1つずつ足し引きもできる。
      国境・地名、赤道・日付変更線は「下敷き」なので、セットでは変えない */
   const PRESETS = [
@@ -1802,7 +1834,7 @@ if (MapLayer) {
   const GROUPS = [
     { key: "air", en: "AIR", ja: "空気", keys: ["wind", "rain", "cloud-ir", "pressure"] },
     { key: "sea", en: "SEA", ja: "海", keys: ["currents", "sst-anom", "sea-ice"] },
-    { key: "earth", en: "EARTH", ja: "大地", keys: ["interior", "quakes", "volcanoes", "plates"] },
+    { key: "earth", en: "EARTH", ja: "大地", keys: ["quakes", "quakehist", "interior", "volcanoes", "plates"] },
     { key: "space", en: "SPACE", ja: "宇宙", keys: ["sats", "aurora", "milky", "sky"] },
     { key: "map", en: "MAP", ja: "地図", keys: ["map", "capitals", "guide"] },
   ];
@@ -1838,6 +1870,7 @@ if (MapLayer) {
   /* 地球の中（断面）：入る前の層の状態を覚えて全部しまい、ほかのボタンは押せなくする。出るときに元へ戻す */
   const earthB = grpBody("earth");
   if (earthB) earthB.insertAdjacentHTML("beforeend", `<p class="note int-note" hidden><b>地球の中（断面）</b>：日本を東西に通る断面と、東経125°の断面で、地球を4分の1切り取っています。層の深さは地震波から作られた標準モデル（PREM）、切り口の色は深さごとの温度の推定（文献の代表的な値で、数百℃の幅があります）。切り取った中の点は、1990〜2025年の M5.0 以上の地震を本当の深さに置いたものです。プレートの境目（地表の線）も一緒に出しています。点の列が地表の境目（海溝）から始まって、斜めに深くなっていくのを見てください（色＝深さ：<span style="color:rgb(255,158,64)">橙 浅い〜70km</span>／<span style="color:rgb(160,240,120)">黄緑 70〜300km</span>／<span style="color:rgb(130,170,255)">青紫 300km〜</span>）。日本の下で、点が斜めに深くなっていく列が、沈み込んだ海のプレートだと考えられています。中の動き（マントル対流など）は、まだ入れていません</p>`);
+  if (earthB && QuakeHistLayer) earthB.insertAdjacentHTML("beforeend", `<p class="note qh-note" hidden><b>過去の地震（深さ）</b>：1990〜2025年の M5.0 以上、約6万件の震央です（USGS の記録。予測ではありません）。色＝震源の深さ：<span style="color:rgb(255,158,64)">橙 〜70km</span>／<span style="color:rgb(220,235,90)">黄</span>〜<span style="color:rgb(120,240,140)">黄緑 70〜300km</span>／<span style="color:rgb(130,170,255)">青紫 300km〜</span>。ほとんどがプレートの境目に並びます。海溝から陸側へ、橙→黄緑→青紫と深くなっていく所は、海のプレートがその向きへ沈み込んでいると考えられている所です。「プレート」と一緒に出すと見比べやすくなります</p>`);
   let intSaved = null;
   const intSync = on => {
     box.querySelectorAll("[data-chip]").forEach(b => { if (b.dataset.chip !== "interior" && b.dataset.chip !== "plates") b.disabled = on; });   /* 断面の間も、プレートの境目は出し入れできる */
@@ -1898,9 +1931,9 @@ if (MapLayer) {
       + (a.length < MY_MAX ? `<button type="button" class="add" data-myadd="1">＋ いまの組み合わせを保存</button>` : "");
   };
 
-  var syncChips = () => { box.querySelectorAll("[data-chip]").forEach(b => b.setAttribute("aria-pressed", String(!!CHIPS.find(c => c.key === b.dataset.chip).get()))); syncCounts(); };
+  var syncChips = () => { box.querySelectorAll("[data-chip]").forEach(b => b.setAttribute("aria-pressed", String(!!CHIPS.find(c => c.key === b.dataset.chip).get()))); syncCounts(); const qn = box.querySelector(".qh-note"); if (qn) qn.hidden = !QuakeHistLayer?.visible; };
   /* 地名の地球儀：文字が見やすいよう、選べる層をしぼった固定モード。入る前の状態を覚えておき、出るときに戻す */
-  const NAMES_OK = ["map", "capitals", "guide", "plates", "quakes", "volcanoes"], NAMES_OFF_AT_START = ["quakes", "volcanoes", "plates"];
+  const NAMES_OK = ["map", "capitals", "guide", "plates", "quakes", "quakehist", "volcanoes"], NAMES_OFF_AT_START = ["quakes", "quakehist", "volcanoes", "plates"];
   const OVERLAYS = ["quakes", "volcanoes", "plates", "sats", "aurora", "milky", "sky", "capitals"];
   let curMode = null, saved = null;
   const setMode = k => {
@@ -2054,7 +2087,7 @@ function loop(now) {
   const dt = Math.min(now - last, 100); last = now;
   frames.push(dt); if (frames.length > 120) frames.shift();
   if (VisualParticles.visible) VisualParticles.step(Math.min(dt / 16.667, 3));
-  CurrentLayer?.tick(dt); InteriorLayer.tick();
+  CurrentLayer?.tick(dt); InteriorLayer.tick(); QuakeHistLayer?.tick();
   for (const l of SCALAR_LAYERS) l.tick?.(); MapLayer?.tick(); CapitalLayer?.tick(); StateLayer?.tick(); SkyLayer?.tick(); GuideLayer?.tick(); AuroraLayer?.tick(now); ShakeRipples?.tick(now, !!FEATURE_LAYERS.find(l => l.id === "quakes")?.visible);
   Rotate.tick(now, dt); Spin.tick(); controls.update();
   for (const l of FEATURE_LAYERS) l.tick(camera.position.length());
