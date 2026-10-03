@@ -1240,6 +1240,7 @@ const realSun = () => { const s = subsolarPoint(Clock.now()), p = [0,0,0]; toXYZ
 const Rotate = (() => {
   const Y = new THREE.Vector3(0, 1, 0), SPEEDS = { slow: 10, mid: 30, fast: 60 };   /* 画面の1秒で、地球の何分ぶん回すか */
   let on = false, speed = "mid", pauseUntil = 0, satWas = false, onChange = null;
+  let tiltK = 0; const EP = new THREE.Vector3(), UP = new THREE.Vector3(), D = new THREE.Vector3(), YP = new THREE.Vector3();
   const el = renderer.domElement;
   el.addEventListener("pointerdown", () => { pauseUntil = Infinity; });
   const resume = () => { if (pauseUntil === Infinity) pauseUntil = performance.now() + 2500; };
@@ -1258,6 +1259,20 @@ const Rotate = (() => {
       onChange?.(on);
     },
     tick(now, dt) {
+      /* 地軸の傾き：画面の「上」を地球の軸ではなく、地球が太陽を回る面（黄道）の北に向ける。
+         すると地軸が本物どおり約23.4°傾いて見える。向きは今日の星空と太陽に合わせて計算（黄道の北極＝赤経18h・赤緯+66.56°）。
+         オン／オフは少しずつ傾ける・戻す */
+      tiltK += ((on ? 1 : 0) - tiltK) * Math.min(1, dt / 450);
+      if (!on && tiltK < 0.002) { tiltK = 0; if (camera.up.y !== 1) camera.up.set(0, 1, 0); }
+      else {
+        const p = [0, 0, 0]; toXYZ(66.5607, 270, 1, p, 0);
+        EP.set(p[0], p[1], p[2]).applyAxisAngle(Y, -gmstDeg(Clock.now()) * D2R + spinAngle);
+        UP.copy(Y).lerp(EP, tiltK).normalize();
+        D.copy(camera.position).normalize();
+        UP.addScaledVector(D, -UP.dot(D)); const len = UP.length();          /* 見る向きと重なると上が決まらないので、そのときは地軸の上へ寄せる */
+        if (len < 0.3) { YP.copy(Y).addScaledVector(D, -Y.dot(D)).normalize(); UP.normalize().lerp(YP, 1 - len / 0.3); }
+        camera.up.copy(UP.normalize());
+      }
       if (!on || now < pauseUntil) return;
       const a = -(SPEEDS[speed] / 1440) * 2 * Math.PI * (dt / 1000);   /* 1440分＝1日で1周 */
       camera.position.applyAxisAngle(Y, a); camera.lookAt(0, 0, 0);
@@ -1515,7 +1530,7 @@ if (MapLayer) {
     box.querySelector(".spinspd").hidden = !on;
     box.querySelectorAll("[data-spinspd]").forEach(x => x.setAttribute("aria-pressed", String(x.dataset.spinspd === Rotate.speed)));
     const nt = box.querySelector(".spin-note"); nt.hidden = !on;
-    nt.innerHTML = `<b>自転の演出</b>：太陽を止めたまま、地球を西から東へ回しています。本当の速さ（1時間に15°、1周24時間）ではなく、${SPIN_TXT[Rotate.speed]}。回している間の昼と夜の位置は、本当の時刻とは合いません（やめると本当の位置に戻ります）。雲・風・地震などのデータは地球に付いたまま一緒に回るので、データの時刻は変わりません。${SatLayer ? "人工衛星は「いま」の位置で飛んでいるので、回している間はお休みです。" : ""}触ると止まり、離すとまた回ります`;
+    nt.innerHTML = `<b>自転の演出</b>：太陽を止めたまま、地球を西から東へ回しています。本当の速さ（1時間に15°、1周24時間）ではなく、${SPIN_TXT[Rotate.speed]}。画面の上を、地球が太陽を回る面の北に合わせているので、地軸が本物どおり約23.4°傾いて見えます（傾いている向きは今日の位置。真横から見ると一番よく傾いて見え、地軸がこちら向き・向こう向きに倒れている方向から見ると、まっすぐに見えます）。回している間の昼と夜の位置は、本当の時刻とは合いません（やめると本当の位置に戻ります）。雲・風・地震などのデータは地球に付いたまま一緒に回るので、データの時刻は変わりません。${SatLayer ? "人工衛星は「いま」の位置で飛んでいるので、回している間はお休みです。" : ""}触ると止まり、離すとまた回ります`;
     const sc = box.querySelector('[data-chip="sats"]'); if (sc) sc.disabled = on || (NamesMode && !NAMES_OK.includes("sats"));
     const cb = document.getElementById("t-sats"); if (cb) { cb.disabled = on; cb.checked = !!SatLayer?.visible; }
     document.getElementById("spinbadge")?.toggleAttribute("hidden", !on);
