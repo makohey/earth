@@ -1370,7 +1370,7 @@ document.getElementById("d-rows").innerHTML = [
   ["種別", `${wm.kind}（${wm.model}）`],
   ["有効時刻", `<span class="num">${wm.validTime.slice(0,16).replace("T"," ")} UTC</span>`],
   ["予報の初期時刻", `<span class="num">${wm.issuedTime.slice(0,16).replace("T"," ")} UTC</span>`],
-  ["鮮度", `${wm.delivery}／通常${wm.usualIntervalH}時間ごと${Catalog.generatedAt ? `<br><span class="num" style="color:var(--ink-faint)">取得 ${fmtJST(Catalog.generatedAt)}</span>` : ""}`],
+  ["鮮度", `${wm.delivery}／通常${wm.usualIntervalH}時間ごと<br><span style="color:var(--ink-faint)">下の札の色＝データの古さ：<span style="color:var(--accent)">緑</span> 3時間以内／<span style="color:#f2d45c">黄</span> 3〜6時間／<span style="color:#ff9f43">橙</span> 6〜9時間／<span style="color:#ff6b6b">赤</span> 9時間以上。水源（無料の配信元）を守るため、数時間の遅れは残ります</span>${Catalog.generatedAt ? `<br><span class="num" style="color:var(--ink-faint)">取得 ${fmtJST(Catalog.generatedAt)}</span>` : ""}`],
   ["解像度", wm.resolution],
   ["出典", `${wm.credit}${wm.sampleCredit ? `<br><span style="color:var(--ink-faint)">${wm.sampleCredit}</span>` : ""}`],
   ["地図", Catalog.meta("land").credit],
@@ -1641,16 +1641,20 @@ for (const l of SCALAR_LAYERS) document.getElementById("t-" + l.id).addEventList
 function updateChip() {
   const chip = document.getElementById("d-fresh"), now = Date.now();
   const mismatch = SCALAR_LAYERS.some(l => l.visible && !Catalog.validAt(l.id, Clock.now()));
-  let text, ok = false;
+  let text, ok = false, age = "";
   if (Catalog.mode !== "live") text = "サンプル";
-  else if (Catalog.generatedAt && now - Catalog.generatedAt > wm.usualIntervalH * 3 * 3600000) text = "更新が止まっています";
+  else if (Catalog.generatedAt && now - Catalog.generatedAt > wm.usualIntervalH * 3 * 3600000) { text = "更新が止まっています"; age = "stop"; }
   else {
-    const h = Math.round((Clock.now() - now) / 3600000);
+    const hf = (now - Clock.now()) / 3600000, h = Math.round(-hf);
     text = h === 0 ? "いまごろ" : h < 0 ? `約${-h}時間前` : `約${h}時間後`;
     ok = true;
+    /* 古さで札の色を変える（3時間ごと）：緑 3時間以内／黄 3〜6／橙 6〜9／赤 9時間以上 */
+    age = hf < 3 ? "a0" : hf < 6 ? "a1" : hf < 9 ? "a2" : "a3";
   }
-  if (mismatch) { text = "時刻ちがいを含む"; ok = false; }
+  if (mismatch) { text = "時刻ちがいを含む"; ok = false; age = ""; }
   chip.textContent = text; chip.classList.toggle("ok", ok);
+  chip.dataset.age = age;
+  chip.title = age === "stop" ? "データの更新が止まっています" : age ? "札の色＝データの古さ（緑 3時間以内／黄 3〜6時間／橙 6〜9時間／赤 9時間以上）" : "";
 }
 setInterval(updateChip, 60000);
 updateChip();
