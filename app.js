@@ -1724,6 +1724,25 @@ const MoonLayer = (() => {
     },
   };
 })();
+/* ===== 目線をある場所へなめらかに運ぶ（小さな旅で使う）。触ったらそこで止まる ===== */
+const Fly = (() => {
+  let job = null; const q = new THREE.Quaternion(), qi = new THREE.Quaternion(), tmp = [0, 0, 0];
+  renderer.domElement.addEventListener("pointerdown", () => { job = null; });
+  return {
+    to(lat, lon, dist, ms = 1400) {
+      toXYZ(lat, lon, 1, tmp, 0);
+      const from = camera.position.clone(), dir = from.clone().normalize(), target = new THREE.Vector3(...tmp);
+      job = { t0: performance.now(), ms, q: new THREE.Quaternion().setFromUnitVectors(dir, target), from, d0: from.length(), d1: dist };
+    },
+    tick(now) {
+      if (!job) return;
+      const f = Math.min(1, (now - job.t0) / job.ms), e = f < .5 ? 2 * f * f : 1 - Math.pow(-2 * f + 2, 2) / 2;
+      q.copy(qi).slerp(job.q, e);
+      camera.position.copy(job.from).normalize().applyQuaternion(q).multiplyScalar(job.d0 + (job.d1 - job.d0) * e); camera.lookAt(0, 0, 0);
+      if (f >= 1) job = null;
+    },
+  };
+})();
 const Rotate = (() => {
   const Y = new THREE.Vector3(0, 1, 0), SPEEDS = { slow: 10, mid: 30, fast: 60 };   /* 画面の1秒で、地球の何分ぶん回すか */
   let on = false, speed = "mid", pauseUntil = 0, satWas = false, onChange = null;
@@ -1845,7 +1864,7 @@ document.getElementById("d-layers").innerHTML = SCALAR_LAYERS.map(l => layerBloc
   + (CurrentLayer ? `<div class="layer"><label>${CurrentLayer.meta.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${CurrentLayer.meta.kind}</span></label>
       <div class="sub">${CurrentLayer.meta.model}。${CurrentLayer.meta.caution}<br>解像度：${CurrentLayer.meta.resolution}<br>出典：${CurrentLayer.meta.credit}</div></div>` : "")
   + `<div class="layer" id="why"><label>なんで？（小さな辞典）</label>
-      <div class="sub"><a href="learn/typhoon.html" style="color:var(--accent)">台風の風と雲のしくみ</a>：地上で吸い込み、目の壁でのぼり、上空で吹き出し、目で下がる（動く模式図）<br><a href="learn/winds.html" style="color:var(--accent)">地球の大きな風の帯</a>：貿易風・偏西風・ジェット気流・極東風と、それを作る空気の大きな輪</div></div>`
+      <div class="sub"><a href="learn/typhoon.html" style="color:var(--accent)">台風の風と雲のしくみ</a>：地上で吸い込み、目の壁でのぼり、上空で吹き出し、目で下がる（動く模式図）<br><a href="learn/winds.html" style="color:var(--accent)">地球の大きな風の帯</a>：貿易風・偏西風・ジェット気流・極東風と、それを作る空気の大きな輪<br><a href="learn/earth.html" style="color:var(--accent)">プレートの一生</a>：海嶺で生まれ、海を旅して、海溝で沈む。地震の点の色の読み方、若い板と古い板、静かな境目（動く模式図）</div></div>`
   + (StateLayer ? `<div class="layer"><label>${StateLayer.info.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${StateLayer.info.kind}</span></label>
       <div class="sub">${StateLayer.info.note}<br>出典：${StateLayer.info.credit}</div></div>` : "")
   + (CapitalLayer ? `<div class="layer"><label>${CapitalLayer.info.title}<span style="font-weight:400;color:var(--ink-faint);font-size:11.5px">　${CapitalLayer.info.kind}</span></label>
@@ -1882,6 +1901,7 @@ if (MapLayer) {
       </ul>
       よく使う端末ごとに、1回ずつ作ってください。
     </div>
+    <div class="tours presets" role="group" aria-label="見てみよう（小さな旅）"><span class="cap">見てみよう</span></div>
     <div class="spinrow presets" role="group" aria-label="自転の演出"><span class="cap">自転</span><button type="button" data-spin="1" aria-pressed="false">↻ 地球を回す</button>
       <span class="spinspd" hidden>${Object.entries({ slow: "ゆっくり", mid: "ふつう", fast: "はやい" }).map(([k, t]) => `<button type="button" data-spinspd="${k}" aria-pressed="${k === Rotate.speed}">${t}</button>`).join("")}</span></div>
     <p class="note spin-note" hidden></p>
@@ -1934,6 +1954,32 @@ if (MapLayer) {
     if (P.far && camera.position.length() < P.far) camera.position.setLength(P.far);   /* 宇宙は、衛星が入るところまで引く */
     syncChips(); updateChip();
   };
+  /* 見てみよう（小さな旅）：その場所へ回り込み、必要な層だけ出して、問いを1つだけ出す。答えは辞典に */
+  const TOURS = [
+    { key: "slab", label: "日本の下の板", on: ["quakehist", "plates"], at: [37, 139, 2.3], link: "learn/earth.html#subduction",
+      q: "日本海溝（東の線）から西の陸の方へ、点の色が 橙 → 黄緑 → 青紫 と変わっていく。地面の下で、何が起きている？", act: { label: "断面で確かめる", run: () => { const c = CHIPS.find(c => c.key === "interior"); if (c && !c.get()) c.set(true); } } },
+    { key: "life", label: "生まれる海・沈む海", on: ["seaage", "platemove", "plates"], at: [8, -160, 3.4], link: "learn/earth.html#life",
+      q: "東の赤い若い海底で生まれた白い点は、どこへ向かって、どこで消える？" },
+    { key: "young", label: "チリの南が静かなわけ", on: ["quakehist", "plates", "seaage"], at: [-43, -78, 2.2], link: "learn/earth.html#young",
+      q: "南緯46°あたりから南だけ、地震の点が少ない。左のジグザグの線（海嶺）と、海底の色にヒントがある。なぜ？" },
+    { key: "quiet", label: "静かな境目は安全？", on: ["quakehist", "plates"], at: [32, 135, 2.1], link: "learn/earth.html#locked",
+      q: "南海トラフ（四国・紀伊半島の沖の線）に沿っては、点が少ない。少ない＝安全、と言える？", foot: "この地球儀は、地震が起きるかどうかの判断はしません。公式の情報は気象庁・地震本部へ" },
+  ];
+  const card = document.getElementById("tourcard");
+  const startTour = T => {
+    if (Rotate.on) Rotate.on = false;
+    if (InteriorLayer.visible) { const c = CHIPS.find(c => c.key === "interior"); c?.set(false); }
+    setMode("globe"); applyPreset({ on: T.on });
+    Fly.to(T.at[0], T.at[1], T.at[2]);
+    const dk = document.getElementById("dock"), dt = document.getElementById("lens"); if (dk && dt && !dt.hidden) { dt.hidden = true; dk.setAttribute("aria-expanded", "false"); }
+    if (card) {
+      card.querySelector(".tq").textContent = T.q;
+      card.querySelector(".ta").innerHTML = `<a href="${T.link}">辞典で答えを読む →</a>${T.act ? `<button type="button" class="tact">${T.act.label}</button>` : ""}${T.foot ? `<span class="tf">${T.foot}</span>` : ""}`;
+      const b = card.querySelector(".tact"); if (b) b.onclick = () => { T.act.run(); card.hidden = true; };
+      card.hidden = false;
+    }
+  };
+  if (card) card.querySelector(".tx").onclick = () => { card.hidden = true; };
   /* 層のボタンを分野ごとの枠に分ける（ダッシュボードのように）。枠はたためる（たたんだ状態はこの端末にだけ覚える） */
   const GROUPS = [
     { key: "air", en: "AIR", ja: "空気", keys: ["wind", "rain", "cloud-ir", "pressure"] },
@@ -1980,7 +2026,7 @@ if (MapLayer) {
   let intSaved = null;
   const intSync = on => {
     box.querySelectorAll("[data-chip]").forEach(b => { if (b.dataset.chip !== "interior" && b.dataset.chip !== "plates") b.disabled = on; });   /* 断面の間も、プレートの境目は出し入れできる */
-    box.querySelectorAll("[data-mode],[data-preset],[data-myset],[data-wname],[data-wdir],[data-wlev]").forEach(b => { b.disabled = on; });
+    box.querySelectorAll("[data-mode],[data-preset],[data-myset],[data-wname],[data-wdir],[data-wlev]").forEach(b => { b.disabled = on; });   /* 小さな旅は押せる（断面から出て始める） */
     const nt = box.querySelector(".int-note"); if (nt) nt.hidden = !on;
   };
   InteriorLayer.onChange = on => {
@@ -2025,6 +2071,7 @@ if (MapLayer) {
     syncChips();
   };
   const syncCounts = () => GROUPS.forEach(G => { const el = box.querySelector(`[data-cnt="${G.key}"]`); if (!el) return; const n = G.keys.filter(k => { const c = CHIPS.find(c => c.key === k); return c && c.get(); }).length; el.textContent = n ? `${n}` : ""; });
+  box.querySelector(".tours").insertAdjacentHTML("beforeend", TOURS.filter(T => T.on.some(k => CHIPS.find(c => c.key === k))).map(T => `<button type="button" data-tour="${T.key}">${T.label}</button>`).join(""));
   box.querySelector(".presets").insertAdjacentHTML("beforeend", PRESETS.filter(P => P.on.some(k => CHIPS.find(c => c.key === k))).map(P => `<button type="button" data-preset="${P.key}">${P.label}</button>`).join(""));
   /* 自分のセット（カスタムプリセット）：いまの組み合わせを、この端末のブラウザに3つまで保存する。サーバーには送らない */
   const MY_KEY = "globe.mySets.v1", MY_MAX = 3;
@@ -2092,6 +2139,7 @@ if (MapLayer) {
     if (b.dataset.wname) { setWName(wname === b.dataset.wname ? null : b.dataset.wname); return; }
     if (b.dataset.wdir) { setDir(!VisualParticles.dirMode); return; }
     if (b.dataset.jump) { document.getElementById(b.dataset.jump)?.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" }); return; }
+    if (b.dataset.tour) { startTour(TOURS.find(T => T.key === b.dataset.tour)); return; }
     if (b.dataset.spin) { Rotate.on = !Rotate.on; return; }
     if (b.dataset.spinspd) { Rotate.speed = b.dataset.spinspd; spinSync(); return; }
     if (b.dataset.preset) { applyPreset(PRESETS.find(P => P.key === b.dataset.preset)); return; }
@@ -2197,7 +2245,7 @@ function loop(now) {
   if (VisualParticles.visible) VisualParticles.step(Math.min(dt / 16.667, 3));
   CurrentLayer?.tick(dt); InteriorLayer.tick(); QuakeHistLayer?.tick(); PlateMoveLayer.tick(dt);
   for (const l of SCALAR_LAYERS) l.tick?.(); MapLayer?.tick(); CapitalLayer?.tick(); StateLayer?.tick(); SkyLayer?.tick(); GuideLayer?.tick(); AuroraLayer?.tick(now); ShakeRipples?.tick(now, !!FEATURE_LAYERS.find(l => l.id === "quakes")?.visible);
-  Rotate.tick(now, dt); Spin.tick(); controls.update();
+  Fly.tick(now); Rotate.tick(now, dt); Spin.tick(); controls.update();
   for (const l of FEATURE_LAYERS) l.tick(camera.position.length());
   renderer.render(scene, camera);
   if (!meter.hidden && now - meterAt > 400) {
