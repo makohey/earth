@@ -154,6 +154,16 @@ jobs:
       - uses: actions/cache/restore@v6
         if: steps.reuse.outputs.deploy == 'true'
         with:
+          path: seaage_cache
+          key: seaage-${{ github.run_id }}
+          restore-keys: seaage-
+      - name: 海底の年齢（EarthByte／GMT のデータ置き場、1°格子、一度だけ）
+        if: steps.reuse.outputs.deploy == 'true'
+        continue-on-error: true
+        run: python scripts/fetch_seafloor_age.py --latest _site/data/latest --cache seaage_cache
+      - uses: actions/cache/restore@v6
+        if: steps.reuse.outputs.deploy == 'true'
+        with:
           path: qhist_cache
           key: qhist-${{ github.run_id }}
           restore-keys: qhist-
@@ -186,6 +196,11 @@ jobs:
         with:
           path: volc_cache
           key: volc-${{ github.run_id }}
+      - uses: actions/cache/save@v6
+        if: steps.reuse.outputs.deploy == 'true' && hashFiles('seaage_cache/*') != ''
+        with:
+          path: seaage_cache
+          key: seaage-${{ github.run_id }}
       - uses: actions/cache/save@v6
         if: steps.reuse.outputs.deploy == 'true' && hashFiles('qhist_cache/*') != ''
         with:

@@ -52,6 +52,7 @@ async function loadCatalog() {
       if (m.selection?.policy === "latestBefore" && m.validTime) { const v = new Date(m.validTime); return v <= t && t - v <= m.selection.maxAgeMin * 60000; }   // 時計より前で、古すぎない
       if (m.validFrom) return new Date(m.validFrom) <= t && t <= new Date(m.validTo); return m.validTime ? +new Date(m.validTime) === +t : true; },
     grid(id) { return { grid: manifest.layers[id].grid, raw: new Int16Array(bufs[id]), meta: this.meta(id) }; },
+    bytes(id) { return new Uint8Array(bufs[id]); },
     /** 物の層（Feature）の中身。行の形のまま返す */
     rows(id) { return (this._rows ||= {})[id] ||= JSON.parse(new TextDecoder().decode(bufs[id])); },
   };
@@ -1387,6 +1388,107 @@ const QuakeHistLayer = (() => {
   };
 })();
 
+/* ===== 海底の年齢：海の底の岩ができてから何百万年か（EarthByte、Seton et al. 2020） =====
+   海嶺（生まれる所）が若く＝赤、離れるほど古く＝青。いちばん古い海底は日本の東の沖（約1億8千万年前後）、そこから海溝で沈む */
+const SeaAgeLayer = (() => {
+  if (!Catalog.has("seafloor-age")) return null;
+  let mesh = null, on = false, ages = null;
+  const g = Catalog.gridInfo("seafloor-age");
+  const STOPS = [[0, [1.00, 0.22, 0.18]], [15, [1.00, 0.55, 0.18]], [40, [0.96, 0.88, 0.30]], [70, [0.45, 0.86, 0.45]], [110, [0.28, 0.72, 0.95]], [180, [0.42, 0.38, 0.92]]];
+  const ramp = a => { for (let k = 1; k < STOPS.length; k++) if (a <= STOPS[k][0]) { const [a0, c0] = STOPS[k-1], [a1, c1] = STOPS[k], t = (a - a0) / (a1 - a0); return c0.map((c, i) => c + (c1[i] - c) * t); } return STOPS[STOPS.length - 1][1]; };
+  async function build() {
+    await Catalog.load("seafloor-age");
+    ages = Catalog.bytes("seafloor-age");
+    const W = g.nx, H = g.ny, px = new Uint8Array(W * H * 4);
+    for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
+      const a = ages[j * W + i], o = ((H - 1 - j) * W + i) * 4;          /* 画像の1行目＝南（地球の殻と同じ向き） */
+      if (a === g.none) { px[o + 3] = 0; continue; }
+      const c = ramp(a); px[o] = c[0] * 255; px[o + 1] = c[1] * 255; px[o + 2] = c[2] * 255; px[o + 3] = 255;
+    }
+    const tex = new THREE.DataTexture(px, W, H, THREE.RGBAFormat); tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearFilter; tex.needsUpdate = true;
+    mesh = new THREE.Mesh(new THREE.SphereGeometry(1.0009, 192, 96), new THREE.ShaderMaterial({
+      uniforms: { uTex: { value: tex } }, transparent: true, depthWrite: false,
+      vertexShader: `varying vec3 vPos; void main(){ vPos = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+      fragmentShader: `uniform sampler2D uTex; varying vec3 vPos; const float PI = 3.141592653589793;
+        void main(){ vec3 n = normalize(vPos); float lat = asin(clamp(n.y, -1.0, 1.0)), lon = atan(-n.z, n.x);
+          vec4 c = texture2D(uTex, vec2((lon + PI) / (2.0 * PI), (lat + PI * 0.5) / PI)); if (c.a < 0.35) discard;
+          gl_FragColor = vec4(c.rgb * 0.85, 0.62 * c.a); }`,
+    }));
+    mesh.renderOrder = 1.2; mesh.visible = on; scene.add(mesh);
+  }
+  return {
+    get visible() { return on; }, get meta() { return Catalog.meta("seafloor-age"); },
+    async setOn(v) { on = !!v; if (on && !mesh) { try { await build(); } catch (e) { console.warn("海底の年齢を読めませんでした", e); on = false; } } if (mesh) mesh.visible = on; },
+    /** その地点の年齢（百万年）。陸やデータなしは null */
+    at(lonDeg, latDeg) { if (!ages) return null; const j = Math.min(g.ny - 1, Math.max(0, Math.floor(g.lat0 + 0.5 - latDeg))), i = ((Math.floor(lonDeg - g.lon0 + 0.5) % g.nx) + g.nx) % g.nx, a = ages[j * g.nx + i]; return a === g.none ? null : a; },
+  };
+})();
+
+/* ===== プレートの動き（研究モデル）：PB2002 の回転（オイラー極）を「地球全体として回らない」基準にしたもの =====
+   点がプレートごとにまとまって動く。境目でほかのプレートに入ったら消える（沈む・押し合う所）。
+   新しい点の半分は「広がる」境目（海嶺）のすぐ脇から出す（生まれる所の演出）。速さは早送り：1秒でおよそ80万年ぶん */
+const PlateMoveLayer = (() => {
+  let on = false, ready = false, pts = null, plates = null, grid = null, G = null, ridges = [];
+  const N = window.innerWidth < 700 ? 2600 : 4200, MYR_PER_SEC = 0.8, R = 1.0026;
+  const X = new Float32Array(N * 3), pid = new Uint8Array(N), age = new Float32Array(N), life = new Float32Array(N);
+  const v3 = new THREE.Vector3(), w3 = new THREE.Vector3(), t3 = new THREE.Vector3();
+  const plateAt = (x, y, z) => { const la = Math.asin(Math.max(-1, Math.min(1, y))) / D2R, lo = Math.atan2(-z, x) / D2R;
+    const j = Math.min(G.ny - 1, Math.max(0, Math.floor(G.lat0 + 0.5 - la))), i = ((Math.floor(lo - G.lon0 + 0.5) % G.nx) + G.nx) % G.nx; return grid[j * G.nx + i]; };
+  const tmp = [0, 0, 0];
+  function spawn(k) {
+    for (let tries = 0; tries < 10; tries++) {
+      let la, lo;
+      if (ridges.length && Math.random() < 0.5) {                        /* 海嶺のすぐ脇（生まれる所） */
+        const r = ridges[(Math.random() * ridges.length) | 0], t = Math.random();
+        la = r[1] + (r[3] - r[1]) * t + (Math.random() - 0.5) * 0.8; lo = r[0] + (r[2] - r[0]) * t + (Math.random() - 0.5) * 0.8;
+      } else { la = Math.asin(Math.random() * 2 - 1) / D2R; lo = Math.random() * 360 - 180; }
+      toXYZ(la, lo, 1, tmp, 0); const p = plateAt(tmp[0], tmp[1], tmp[2]);
+      if (p === G.none || !plates[p].w) continue;
+      X[k*3] = tmp[0]; X[k*3+1] = tmp[1]; X[k*3+2] = tmp[2]; pid[k] = p; age[k] = 0; life[k] = 240 + Math.random() * 300; return;
+    }
+    life[k] = 0;
+  }
+  async function build() {
+    const [meta, bin, pl] = await Promise.all([getJSON("data/map/platemotion.json"), getBin("data/map/platemotion.bin"), getJSON("data/map/plates.json")]);
+    plates = meta.plates; G = meta.grid; grid = new Uint8Array(bin);
+    ridges = pl.steps.filter(s => s[4] === 0).map(s => [s[0], s[1], s[2], s[3]]);   /* 「広がる」境目 */
+    for (let k = 0; k < N; k++) { spawn(k); age[k] = Math.random() * life[k]; }
+    const geo = new THREE.BufferGeometry();
+    const pos = new Float32Array(N * 3), al = new Float32Array(N);
+    geo.setAttribute("position", new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage)); geo.setAttribute("aA", new THREE.BufferAttribute(al, 1).setUsage(THREE.DynamicDrawUsage));
+    pts = new THREE.Points(geo, new THREE.ShaderMaterial({
+      uniforms: { uPR: { value: renderer.getPixelRatio() } }, transparent: true, depthWrite: false,
+      vertexShader: `attribute float aA; uniform float uPR; varying float vA; void main(){ vA = aA; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); gl_PointSize = 2.6 * uPR; }`,
+      fragmentShader: `varying float vA; void main(){ vec2 p = gl_PointCoord - 0.5; float r = length(p); if (r > 0.5 || vA <= 0.0) discard; gl_FragColor = vec4(vec3(0.96, 0.95, 1.0), vA * (1.0 - smoothstep(0.25, 0.5, r))); }`,
+    }));
+    pts.frustumCulled = false; pts.renderOrder = 3.3; pts.visible = on; scene.add(pts); ready = true;
+  }
+  function step(dtScale) {
+    const pos = pts.geometry.attributes.position.array, al = pts.geometry.attributes.aA.array, dMyr = MYR_PER_SEC / 60 * dtScale;
+    for (let k = 0; k < N; k++) {
+      if (life[k] <= 0 || age[k] > life[k]) spawn(k);
+      const w = plates[pid[k]].w; if (!w) { life[k] = 0; continue; }
+      v3.set(X[k*3], X[k*3+1], X[k*3+2]); w3.set(w[0], w[1], w[2]);
+      t3.crossVectors(w3, v3).multiplyScalar(dMyr); v3.add(t3).normalize();   /* v = ω × r（rad/100万年） */
+      X[k*3] = v3.x; X[k*3+1] = v3.y; X[k*3+2] = v3.z; age[k] += dtScale;
+      if (plateAt(v3.x, v3.y, v3.z) !== pid[k]) { life[k] = 0; al[k] = 0; continue; }   /* ほかのプレートに入った＝沈む・押し合う所で消える */
+      pos[k*3] = v3.x * R; pos[k*3+1] = v3.y * R; pos[k*3+2] = v3.z * R;
+      const f = age[k] / life[k]; al[k] = Math.min(1, f * 8, (1 - f) * 6) * 0.85;
+    }
+    pts.geometry.attributes.position.needsUpdate = true; pts.geometry.attributes.aA.needsUpdate = true;
+  }
+  return {
+    get visible() { return on; },
+    async setOn(v) { on = !!v; if (on && !ready) { try { await build(); } catch (e) { console.warn("プレートの動きを読めませんでした", e); on = false; } } if (pts) pts.visible = on; },
+    tick(dt) { if (on && ready) step(Math.min(dt / 16.667, 3)); },
+    /** その地点の動き：[速さ mm/年, 向き（北から時計回りの度）, プレート記号] */
+    at(lonDeg, latDeg) { if (!ready) return null; toXYZ(latDeg, lonDeg, 1, tmp, 0); const p = plateAt(tmp[0], tmp[1], tmp[2]); if (p === G.none || !plates[p].w) return null;
+      const w = plates[p].w; v3.set(tmp[0], tmp[1], tmp[2]); t3.set(w[0], w[1], w[2]).cross(v3).multiplyScalar(6371);   /* mm/年 */
+      const lo = lonDeg * D2R, la = latDeg * D2R, e = new THREE.Vector3(-Math.sin(lo), 0, -Math.cos(lo)), n = new THREE.Vector3(-Math.sin(la) * Math.cos(lo), Math.cos(la), Math.sin(la) * Math.sin(lo));
+      return [t3.length(), (Math.atan2(t3.dot(e), t3.dot(n)) / D2R + 360) % 360, plates[p].code]; },
+  };
+})();
+
 /* ===== 地球の中（断面）：地球を4分の1切り取り、切り口に中のつくりを描く =====
    ・層の深さ：地震波から作られた標準モデル PREM（Dziewonski & Anderson 1981）。地殻〜24km・410km・660km・核とマントルの境 2,891km・内核の境 5,150km
    ・切り口の色：深さごとの温度の推定（文献の代表的な値。幅がある）。「こう考えられている」の位置づけ
@@ -1804,6 +1906,8 @@ if (MapLayer) {
     { key: "sea-ice", label: "海氷", get: () => layerById("sea-ice")?.visible, set: v => setLayer("sea-ice", v) },
     { key: "quakes", label: "地震", get: () => layerById("quakes")?.visible, set: v => setLayer("quakes", v) },
     { key: "quakehist", label: "過去の地震（深さ）", get: () => !!QuakeHistLayer?.visible, set: v => QuakeHistLayer?.setOn(v).then(() => typeof syncChips === "function" && syncChips()) },
+    { key: "seaage", label: "海底の年齢", get: () => !!SeaAgeLayer?.visible, set: v => SeaAgeLayer?.setOn(v).then(() => typeof syncChips === "function" && syncChips()) },
+    { key: "platemove", label: "プレートの動き", get: () => PlateMoveLayer.visible, set: v => PlateMoveLayer.setOn(v).then(() => typeof syncChips === "function" && syncChips()) },
     { key: "interior", label: "地球の中（断面）", get: () => InteriorLayer.visible, set: v => InteriorLayer.setOn(v) },
     { key: "volcanoes", label: "火山", get: () => layerById("volcanoes")?.visible, set: v => setLayer("volcanoes", v) },
     { key: "sats", label: "人工衛星", get: () => layerById("sats")?.visible, set: v => setLayer("sats", v) },
@@ -1814,7 +1918,7 @@ if (MapLayer) {
     { key: "capitals", label: "★ 首都", get: () => CapitalLayer?.visible, set: v => { if (CapitalLayer) CapitalLayer.visible = v; } },
     { key: "map", label: "国境・地名", get: () => MapLayer.visible, set: v => { MapLayer.visible = v; box.querySelector(".viewbox").hidden = !v; } },
     { key: "sky", label: "✦ 星座", get: () => SkyLayer?.visible, set: v => { if (SkyLayer) SkyLayer.visible = v; } },
-  ].filter(c => c.key === "wind" || c.key === "map" || c.key === "interior" || (c.key === "quakehist" ? !!QuakeHistLayer : false) || (c.key === "currents" ? !!CurrentLayer : false) || ((c.key === "sky" || c.key === "milky") ? !!SkyLayer : c.key === "guide" ? !!GuideLayer : c.key === "aurora" ? !!AuroraLayer : c.key === "plates" ? !!PlateLayer : c.key === "capitals" ? !!CapitalLayer : !!layerById(c.key)));
+  ].filter(c => c.key === "wind" || c.key === "map" || c.key === "interior" || c.key === "platemove" || (c.key === "seaage" ? !!SeaAgeLayer : false) || (c.key === "quakehist" ? !!QuakeHistLayer : false) || (c.key === "currents" ? !!CurrentLayer : false) || ((c.key === "sky" || c.key === "milky") ? !!SkyLayer : c.key === "guide" ? !!GuideLayer : c.key === "aurora" ? !!AuroraLayer : c.key === "plates" ? !!PlateLayer : c.key === "capitals" ? !!CapitalLayer : !!layerById(c.key)));
   /* 見方のセット（プリセット）：物語ごとに、関係が見える組み合わせをまとめて出す。そこから1つずつ足し引きもできる。
      国境・地名、赤道・日付変更線は「下敷き」なので、セットでは変えない */
   const PRESETS = [
@@ -1834,7 +1938,7 @@ if (MapLayer) {
   const GROUPS = [
     { key: "air", en: "AIR", ja: "空気", keys: ["wind", "rain", "cloud-ir", "pressure"] },
     { key: "sea", en: "SEA", ja: "海", keys: ["currents", "sst-anom", "sea-ice"] },
-    { key: "earth", en: "EARTH", ja: "大地", keys: ["quakes", "quakehist", "interior", "volcanoes", "plates"] },
+    { key: "earth", en: "EARTH", ja: "大地", keys: ["quakes", "quakehist", "plates", "platemove", "seaage", "volcanoes", "interior"] },
     { key: "space", en: "SPACE", ja: "宇宙", keys: ["sats", "aurora", "milky", "sky"] },
     { key: "map", en: "MAP", ja: "地図", keys: ["map", "capitals", "guide"] },
   ];
@@ -1871,6 +1975,8 @@ if (MapLayer) {
   const earthB = grpBody("earth");
   if (earthB) earthB.insertAdjacentHTML("beforeend", `<p class="note int-note" hidden><b>地球の中（断面）</b>：日本を東西に通る断面と、東経125°の断面で、地球を4分の1切り取っています。層の深さは地震波から作られた標準モデル（PREM）、切り口の色は深さごとの温度の推定（文献の代表的な値で、数百℃の幅があります）。切り取った中の点は、1990〜2025年の M5.0 以上の地震を本当の深さに置いたものです。プレートの境目（地表の線）も一緒に出しています。点の列が地表の境目（海溝）から始まって、斜めに深くなっていくのを見てください（色＝深さ：<span style="color:rgb(255,158,64)">橙 浅い〜70km</span>／<span style="color:rgb(160,240,120)">黄緑 70〜300km</span>／<span style="color:rgb(130,170,255)">青紫 300km〜</span>）。日本の下で、点が斜めに深くなっていく列が、沈み込んだ海のプレートだと考えられています。中の動き（マントル対流など）は、まだ入れていません</p>`);
   if (earthB && QuakeHistLayer) earthB.insertAdjacentHTML("beforeend", `<p class="note qh-note" hidden><b>過去の地震（深さ）</b>：1990〜2025年の M5.0 以上、約6万件の震央です（USGS の記録。予測ではありません）。色＝震源の深さ：<span style="color:rgb(255,158,64)">橙 〜70km</span>／<span style="color:rgb(220,235,90)">黄</span>〜<span style="color:rgb(120,240,140)">黄緑 70〜300km</span>／<span style="color:rgb(130,170,255)">青紫 300km〜</span>。ほとんどがプレートの境目に並びます。海溝から陸側へ、橙→黄緑→青紫と深くなっていく所は、海のプレートがその向きへ沈み込んでいると考えられている所です。「プレート」と一緒に出すと見比べやすくなります</p>`);
+  if (earthB) earthB.insertAdjacentHTML("beforeend", `<p class="note pm-note" hidden><b>プレートの動き</b>：研究モデル（PB2002、Bird 2003）の回り方から計算した、ここ数百万年の平均の動きです。基準は「地球全体として回っていない」と見る取り方（NNR）。点はプレートごとにまとまって動き、ほかのプレートに入ると消えます（沈む・押し合う所）。新しい点の半分は「広がる」境目（海嶺）の脇から出しています（生まれる所の演出）。速さは早送りで、1秒でおよそ80万年ぶん（本物は1年に数cm）。地表をタップすると、その場所の速さと向きが出ます</p>
+    <p class="note sa-note" hidden><b>海底の年齢</b>：海の底の岩ができてから何年か（研究モデル、Seton et al. 2020）。<span style="color:rgb(255,70,55)">赤 生まれたて</span> → <span style="color:rgb(245,224,80)">黄 約4千万年</span> → <span style="color:rgb(110,220,115)">緑 約7千万年</span> → <span style="color:rgb(70,185,240)">水色 約1億1千万年</span> → <span style="color:rgb(110,100,235)">青紫 約1億8千万年</span>。海嶺で生まれた海底は、両側へ運ばれながら古くなり、海溝で沈みます。陸と大陸棚はデータがありません</p>`);
   let intSaved = null;
   const intSync = on => {
     box.querySelectorAll("[data-chip]").forEach(b => { if (b.dataset.chip !== "interior" && b.dataset.chip !== "plates") b.disabled = on; });   /* 断面の間も、プレートの境目は出し入れできる */
@@ -1931,9 +2037,9 @@ if (MapLayer) {
       + (a.length < MY_MAX ? `<button type="button" class="add" data-myadd="1">＋ いまの組み合わせを保存</button>` : "");
   };
 
-  var syncChips = () => { box.querySelectorAll("[data-chip]").forEach(b => b.setAttribute("aria-pressed", String(!!CHIPS.find(c => c.key === b.dataset.chip).get()))); syncCounts(); const qn = box.querySelector(".qh-note"); if (qn) qn.hidden = !QuakeHistLayer?.visible; };
+  var syncChips = () => { box.querySelectorAll("[data-chip]").forEach(b => b.setAttribute("aria-pressed", String(!!CHIPS.find(c => c.key === b.dataset.chip).get()))); syncCounts(); const qn = box.querySelector(".qh-note"); if (qn) qn.hidden = !QuakeHistLayer?.visible; const pn = box.querySelector(".pm-note"); if (pn) pn.hidden = !PlateMoveLayer.visible; const sn = box.querySelector(".sa-note"); if (sn) sn.hidden = !SeaAgeLayer?.visible; };
   /* 地名の地球儀：文字が見やすいよう、選べる層をしぼった固定モード。入る前の状態を覚えておき、出るときに戻す */
-  const NAMES_OK = ["map", "capitals", "guide", "plates", "quakes", "quakehist", "volcanoes"], NAMES_OFF_AT_START = ["quakes", "quakehist", "volcanoes", "plates"];
+  const NAMES_OK = ["map", "capitals", "guide", "plates", "platemove", "seaage", "quakes", "quakehist", "volcanoes"], NAMES_OFF_AT_START = ["quakes", "quakehist", "volcanoes", "plates", "platemove", "seaage"];
   const OVERLAYS = ["quakes", "volcanoes", "plates", "sats", "aurora", "milky", "sky", "capitals"];
   let curMode = null, saved = null;
   const setMode = k => {
@@ -2065,6 +2171,8 @@ renderer.domElement.addEventListener("pointerup", e => {
   const ll = `${Math.abs(la).toFixed(1)}°${la >= 0 ? "N" : "S"} ${Math.abs(lo).toFixed(1)}°${lo >= 0 ? "E" : "W"}`;
   document.getElementById("d-pick").innerHTML = `<span class="num">${ll}</span>　風速${field.meta.level && field.meta.level !== "地上10m" ? "（" + field.meta.level.replace(/（.*）/, "") + "）" : ""} <span class="num">${sp.toFixed(1)} m/s</span>　${DIRS[Math.round(from / 22.5) % 16]}の風 <span style="color:var(--ink-faint)">（${wm.kind}・格子から補間）</span>`
     + SCALAR_LAYERS.filter(l => l.visible).map(l => presentValue(l, l.field.sample(lo, la, Clock.now()))).filter(Boolean).map(t => "<br>" + t).join("")
+    + (PlateMoveLayer.visible ? (() => { const m = PlateMoveLayer.at(lo, la); if (!m) return ""; return `<br>プレートの動き（研究モデル） <span class="num">1年に約${(m[0] / 10).toFixed(1)} cm</span>　${DIRS[Math.round(m[1] / 22.5) % 16]}へ（${PLATE_JA[m[2]] ? PLATE_JA[m[2]] + "プレート" : m[2]}）`; })() : "")
+    + (SeaAgeLayer?.visible ? (() => { const a = SeaAgeLayer.at(lo, la); return a === null ? "" : `<br>海底の年齢（推定） <span class="num">約${a >= 100 ? (a / 100).toFixed(1) + "億" : a * 100 + "万"}年</span>`; })() : "")
     + (CurrentLayer?.visible ? (() => { const c = CurrentLayer.sample(lo, la); if (!c) return ""; const sp = Math.hypot(c[0], c[1]), to = (Math.atan2(c[0], c[1]) / D2R + 360) % 360;
         return `<br>海流（${CurrentLayer.meta.month}月のいつもの流れ） <span class="num">${sp.toFixed(2)} m/s</span>　${DIRS[Math.round(to / 22.5) % 16]}へ${Number.isNaN(c[2]) ? "" : `・水温（平年） <span class="num">${c[2].toFixed(1)}℃</span>`}`; })() : "")
     + FEATURE_LAYERS.filter(l => l.shown).map(l => { const f = l.nearest(lo, la, 0.5 + 1.2 * (camera.position.length() - 1)); return f ? "<br>" + (l.profile.present ? l.profile.present(f) : presentObs(f)) : ""; }).join("");
@@ -2087,7 +2195,7 @@ function loop(now) {
   const dt = Math.min(now - last, 100); last = now;
   frames.push(dt); if (frames.length > 120) frames.shift();
   if (VisualParticles.visible) VisualParticles.step(Math.min(dt / 16.667, 3));
-  CurrentLayer?.tick(dt); InteriorLayer.tick(); QuakeHistLayer?.tick();
+  CurrentLayer?.tick(dt); InteriorLayer.tick(); QuakeHistLayer?.tick(); PlateMoveLayer.tick(dt);
   for (const l of SCALAR_LAYERS) l.tick?.(); MapLayer?.tick(); CapitalLayer?.tick(); StateLayer?.tick(); SkyLayer?.tick(); GuideLayer?.tick(); AuroraLayer?.tick(now); ShakeRipples?.tick(now, !!FEATURE_LAYERS.find(l => l.id === "quakes")?.visible);
   Rotate.tick(now, dt); Spin.tick(); controls.update();
   for (const l of FEATURE_LAYERS) l.tick(camera.position.length());
