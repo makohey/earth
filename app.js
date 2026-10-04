@@ -1964,6 +1964,8 @@ if (MapLayer) {
       q: "南緯46°あたりから南だけ、地震の点が少ない。左のジグザグの線（海嶺）と、海底の色にヒントがある。なぜ？" },
     { key: "quiet", label: "静かな境目は安全？", on: ["quakehist", "plates"], at: [32, 135, 2.1], link: "learn/earth.html#locked",
       q: "南海トラフ（四国・紀伊半島の沖の線）に沿っては、点が少ない。少ない＝安全、と言える？", foot: "この地球儀は、地震が起きるかどうかの判断はしません。公式の情報は気象庁・地震本部へ" },
+    { key: "slide", label: "ずれる境目", on: ["quakehist", "plates", "platemove"], at: [53, -178, 2.3], link: "learn/earth.html#slide",
+      q: "アリューシャンの弓は、東の端と西の端で点の色（深さ）がちがう。白い点の動く向きと、弓の線の向きを比べてみると？" },
   ];
   const card = document.getElementById("tourcard");
   const startTour = T => {
