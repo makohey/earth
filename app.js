@@ -1901,10 +1901,10 @@ if (MapLayer) {
       </ul>
       よく使う端末ごとに、1回ずつ作ってください。
     </div>
-    <div class="tours presets" role="group" aria-label="見てみよう（小さな旅）"><span class="cap">見てみよう</span></div>
     <div class="spinrow presets" role="group" aria-label="自転の演出"><span class="cap">自転</span><button type="button" data-spin="1" aria-pressed="false">↻ 地球を回す</button>
       <span class="spinspd" hidden>${Object.entries({ slow: "ゆっくり", mid: "ふつう", fast: "はやい" }).map(([k, t]) => `<button type="button" data-spinspd="${k}" aria-pressed="${k === Rotate.speed}">${t}</button>`).join("")}</span></div>
     <p class="note spin-note" hidden></p>
+    <p class="jumps"><span>地球儀で「なぜ？」を探す</span><button type="button" data-jump="tours">見てみよう（小さな旅）↓</button></p>
     <div class="groups" aria-label="層を出す・消す"></div>
     <p class="jumps">この下に、層ごとの説明と出典、「なんで？」の小さな辞典があります　<button type="button" data-jump="d-layers">説明へ ↓</button><button type="button" data-jump="why">なんで？へ ↓</button></p>
     <p class="note names-note" hidden>地名の地球儀：文字が見やすいよう、出せる層をしぼっています（国境・地名、首都、赤道・日付変更線、プレート、地震、火山）。拡大すると県・州も出ます（一部の国）。ほかのモードに戻ると、前の状態に戻ります</p>
@@ -2073,7 +2073,12 @@ if (MapLayer) {
     syncChips();
   };
   const syncCounts = () => GROUPS.forEach(G => { const el = box.querySelector(`[data-cnt="${G.key}"]`); if (!el) return; const n = G.keys.filter(k => { const c = CHIPS.find(c => c.key === k); return c && c.get(); }).length; el.textContent = n ? `${n}` : ""; });
-  box.querySelector(".tours").insertAdjacentHTML("beforeend", TOURS.filter(T => T.on.some(k => CHIPS.find(c => c.key === k))).map(T => `<button type="button" data-tour="${T.key}">${T.label}</button>`).join(""));
+  /* 見てみよう（小さな旅）のボタンは、パネルの下の方（「なんで？」の小さな辞典のすぐ上）にまとめる。上には「見てみよう ↓」の飛び先だけ */
+  { const sec = document.createElement("div"); sec.className = "layer"; sec.id = "tours";
+    sec.innerHTML = `<label>見てみよう（小さな旅）</label><div class="tours presets" role="group" aria-label="見てみよう（小さな旅）">${TOURS.filter(T => T.on.some(k => CHIPS.find(c => c.key === k))).map(T => `<button type="button" data-tour="${T.key}">${T.label}</button>`).join("")}</div>
+      <div class="sub">押すと、その場所へ地球が回り込み、関係する層だけが出て、問いが1つ出ます。答えは「動く大地のしくみ」の辞典で</div>`;
+    const why = document.getElementById("why"); (why ? why.before(sec) : document.getElementById("d-layers").appendChild(sec));
+    sec.addEventListener("click", e => { const b = e.target.closest("[data-tour]"); if (b) startTour(TOURS.find(T => T.key === b.dataset.tour)); }); }
   box.querySelector(".presets").insertAdjacentHTML("beforeend", PRESETS.filter(P => P.on.some(k => CHIPS.find(c => c.key === k))).map(P => `<button type="button" data-preset="${P.key}">${P.label}</button>`).join(""));
   /* 自分のセット（カスタムプリセット）：いまの組み合わせを、この端末のブラウザに3つまで保存する。サーバーには送らない */
   const MY_KEY = "globe.mySets.v1", MY_MAX = 3;
