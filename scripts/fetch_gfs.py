@@ -40,6 +40,8 @@ PARAMS = {
     (0, 1, 7): "prate",        # PRATE  kg m-2 s-1
     (0, 3, 1): "prmsl",        # PRMSL  海面更正気圧 Pa
     (10, 2, 0): "icec",        # ICEC   海氷の割合 0〜1
+    (0, 0, 0): "t",            # TMP    気温 K（使うのは 850 hPa だけ。気温の境目＝前線のできやすい所を見るため）
+    (0, 3, 0): "pres",         # PRES   地表の気圧 Pa（850 hPa 面が地面の下になる高い山や氷床を除くため）
 }
 
 # 上空の風（大気循環を見る「風の高さ」）：気圧面 hPa → 見せる名前
@@ -64,7 +66,7 @@ def url_for(cycle: dt.datetime) -> str:
     q = {
         "dir": f"/gfs.{d}/{h}/atmos",
         "file": f"gfs.t{h}z.pgrb2.1p00.f{FHOUR:03d}",
-        "var_UGRD": "on", "var_VGRD": "on", "var_PRATE": "on", "var_PRMSL": "on", "lev_mean_sea_level": "on", "var_ICEC": "on",
+        "var_UGRD": "on", "var_VGRD": "on", "var_PRATE": "on", "var_PRMSL": "on", "lev_mean_sea_level": "on", "var_ICEC": "on", "var_TMP": "on", "var_PRES": "on",
         "lev_10_m_above_ground": "on", "lev_surface": "on",
         "lev_850_mb": "on", "lev_500_mb": "on", "lev_250_mb": "on",
     }
@@ -121,7 +123,14 @@ def read_grib(path: str) -> dict:
                 name = PARAMS.get(key)
                 if not name:
                     continue
-                if name in ("u", "v") and eccodes.codes_get(h, "typeOfLevel") == "isobaricInhPa":
+                tol = eccodes.codes_get(h, "typeOfLevel")
+                if name == "t":                                  # 気温は 850 hPa だけ使う
+                    if tol != "isobaricInhPa" or int(eccodes.codes_get(h, "level")) != 850:
+                        continue
+                    name = "t850"
+                if name == "pres" and tol != "surface":
+                    continue
+                if name in ("u", "v") and tol == "isobaricInhPa":
                     lev = int(eccodes.codes_get(h, "level"))
                     if lev not in UPPER_LEVELS:
                         continue
@@ -187,6 +196,28 @@ def encode_pressure(pa: np.ndarray) -> bytes:
     h = (pa / 100.0 - 1000.0) * 10.0
     q = np.where(np.isnan(h), -32768, np.clip(np.round(h), -32767, 32767)).astype("<i2")
     return q.tobytes()
+
+
+def encode_front(t: np.ndarray, ps, lat0: float, dy: float, dx: float) -> tuple[bytes, float]:
+    """850 hPa の気温（約1.5km）と、その変わり方の急さ（℃ / 100km）を1マス2バイトで。
+    1バイト目＝気温＋80（℃）、2バイト目＝急さ×20。255＝なし（850 hPa 面が地面の下：高い山・氷床）"""
+    T = t - 273.15
+    ny, nx = T.shape
+    lat = lat0 - np.arange(ny) * dy
+    km_y = 111.2 * dy
+    km_x = np.maximum(111.2 * dx * np.cos(np.radians(lat)), 5.0)[:, None]
+    Tp = np.concatenate([T[:, -1:], T, T[:, :1]], axis=1)                     # 経度はつながっている
+    gx = (Tp[:, 2:] - Tp[:, :-2]) / (2 * km_x)
+    gy = np.zeros_like(T); gy[1:-1] = (T[:-2] - T[2:]) / (2 * km_y)
+    g = np.hypot(gx, gy) * 100.0
+    k = np.ones((3, 3)) / 9.0                                                  # 細かいざらつきを少しならす
+    gp = np.pad(np.concatenate([g[:, -1:], g, g[:, :1]], axis=1), ((1, 1), (0, 0)), mode="edge")
+    gs = sum(gp[1 + a: 1 + a + ny, 1 + b: 1 + b + nx] * k[a + 1, b + 1] for a in (-1, 0, 1) for b in (-1, 0, 1))
+    under = (ps < 86000) if ps is not None else np.zeros_like(T, dtype=bool)   # 地面が 860 hPa より高い所は使わない
+    q = np.zeros((ny, nx, 2), dtype="uint8")
+    q[..., 0] = np.where(np.isnan(T) | under, 255, np.clip(np.round(T + 80), 0, 254))
+    q[..., 1] = np.where(np.isnan(gs) | under, 255, np.clip(np.round(gs * 20), 0, 254))
+    return q.tobytes(), float(np.nanpercentile(np.where(under, np.nan, gs), 99))
 
 
 def build(fields: dict, out: str, source_url: str | None):
@@ -275,6 +306,25 @@ def build(fields: dict, out: str, source_url: str | None):
                 "resolution": res(uu), "units": "m/s", "credit": CREDIT,
             },
         }
+    t8 = fields.get("t850")                           # 気温の境目（無くてもほかはそのまま）
+    if t8 is not None:
+        pr = fields.get("pres")
+        body, g99 = encode_front(t8["a"], pr["a"] if pr is not None and pr["a"].shape == t8["a"].shape else None, t8["lat0"], t8["dy"], t8["dx"])
+        with open(os.path.join(out, "front850.bin"), "wb") as f:
+            f.write(body)
+        manifest["layers"]["front-850"] = {
+            "type": "field", "file": "front850.bin", "format": "uint8x2-temp80-grad20", "lazy": True,
+            "grid": {"nx": t8["nx"], "ny": t8["ny"], "lon0": t8["lon0"], "lat0": t8["lat0"], "dx": t8["dx"], "dy": t8["dy"], "none": 255},
+            "meta": {
+                "title": "気温の境目（前線のできやすい所）", "level": "約1.5km（850 hPa）", "kind": "モデル計算から求めた目安",
+                "model": f"GFS 予報（850 hPa の気温・初期値 +{FHOUR}時間）から、気温が急に変わる所を計算",
+                "validTime": iso(t8["to"]), "issuedTime": iso(t8["issued"]),
+                "usualIntervalH": CYCLE_H, "delivery": "自動取得（GitHub Actions・約6時間ごと）",
+                "resolution": res(t8), "units": "℃ / 100km", "credit": CREDIT,
+                "caution": "天気図の前線ではありません（前線は気象庁の予報官が判断して引くものです）。高い山や氷床の上は、この高さが地面の下になるので出していません",
+            },
+        }
+        log(f"気温の境目: 上位1%の急さ {g99:.1f} ℃/100km")
     if ic is not None:
         manifest["layers"]["sea-ice"] = {
             "type": "scalar", "file": "seaice.bin", "format": "uint8",

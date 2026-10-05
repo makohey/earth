@@ -1388,6 +1388,45 @@ const QuakeHistLayer = (() => {
   };
 })();
 
+/* ===== 気温の境目（前線のできやすい所）：約1.5km（850 hPa）の気温と、その変わり方の急さ（GFS から計算） =====
+   色＝その高さの気温（青 寒い → 橙 暖かい、うすく）。光る帯＝気温が急に変わる所（寒い空気と暖かい空気の境目）。
+   天気図の前線そのものではない（前線は予報官が判断して引くもの）。高い山や氷床の上は、この高さが地面の下なので出さない */
+const FrontLayer = (() => {
+  if (!Catalog.has("front-850")) return null;
+  const g = Catalog.gridInfo("front-850");
+  let mesh = null, on = false, raw = null;
+  const TS = [[-30, [0.22, 0.40, 1.00]], [-10, [0.35, 0.65, 1.00]], [0, [0.60, 0.85, 1.00]], [10, [0.90, 0.92, 0.82]], [20, [1.00, 0.68, 0.32]], [30, [1.00, 0.36, 0.26]]];
+  const tcol = t => { if (t <= TS[0][0]) return TS[0][1]; for (let k = 1; k < TS.length; k++) if (t <= TS[k][0]) { const [a0, c0] = TS[k-1], [a1, c1] = TS[k], f = (t - a0) / (a1 - a0); return c0.map((c, i) => c + (c1[i] - c) * f); } return TS[TS.length - 1][1]; };
+  async function build() {
+    await Catalog.load("front-850"); raw = Catalog.bytes("front-850");
+    const W = g.nx, H = g.ny, px = new Uint8Array(W * H * 4);
+    for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
+      const k = (j * W + i) * 2, o = ((H - 1 - j) * W + i) * 4, tq = raw[k], gq = raw[k + 1];
+      if (tq === g.none || gq === g.none) { px[o + 3] = 0; continue; }
+      const c = tcol(tq - 80), gr = gq / 20, f = Math.min(1, Math.max(0, (gr - 2) / 3)), ff = f * f * (3 - 2 * f);   /* 2〜5 ℃/100km で光り始める */
+      px[o] = (c[0] * (1 - ff) + 1.00 * ff) * 255; px[o + 1] = (c[1] * (1 - ff) + 0.95 * ff) * 255; px[o + 2] = (c[2] * (1 - ff) + 0.70 * ff) * 255; px[o + 3] = (0.20 + 0.65 * ff) * 255;
+    }
+    const tex = new THREE.DataTexture(px, W, H, THREE.RGBAFormat); tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearFilter; tex.needsUpdate = true;
+    const u0 = (g.lon0 + 180) / 360;                                    /* 格子の経度の始まりに合わせる */
+    mesh = new THREE.Mesh(new THREE.SphereGeometry(1.0011, 192, 96), new THREE.ShaderMaterial({
+      uniforms: { uTex: { value: tex }, uU0: { value: u0 } }, transparent: true, depthWrite: false,
+      vertexShader: `varying vec3 vPos; void main(){ vPos = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+      fragmentShader: `uniform sampler2D uTex; uniform float uU0; varying vec3 vPos; const float PI = 3.141592653589793;
+        void main(){ vec3 n = normalize(vPos); float lat = asin(clamp(n.y, -1.0, 1.0)), lon = atan(-n.z, n.x);
+          vec4 c = texture2D(uTex, vec2(fract((lon + PI) / (2.0 * PI) - uU0 + 0.5 / ${g.nx.toFixed(1)}), (lat + PI * 0.5) / PI)); if (c.a < 0.02) discard;
+          gl_FragColor = vec4(c.rgb, c.a); }`,
+    }));
+    mesh.renderOrder = 1.3; mesh.visible = on; scene.add(mesh);
+  }
+  return {
+    get visible() { return on; }, get meta() { return Catalog.meta("front-850"); },
+    async setOn(v) { on = !!v; if (on && !mesh) { try { await build(); } catch (e) { console.warn("気温の境目を読めませんでした", e); on = false; } } if (mesh) mesh.visible = on; },
+    /** その地点の [気温 ℃, 変わり方 ℃/100km]。なしは null */
+    at(lonDeg, latDeg) { if (!raw) return null; const j = Math.min(g.ny - 1, Math.max(0, Math.round((g.lat0 - latDeg) / g.dy))), i = ((Math.round((lonDeg - g.lon0) / g.dx) % g.nx) + g.nx) % g.nx, k = (j * g.nx + i) * 2;
+      return raw[k] === g.none ? null : [raw[k] - 80, raw[k + 1] / 20]; },
+  };
+})();
+
 /* ===== 海底の年齢：海の底の岩ができてから何百万年か（EarthByte、Seton et al. 2020） =====
    海嶺（生まれる所）が若く＝赤、離れるほど古く＝青。いちばん古い海底は日本の東の沖（約1億8千万年前後）、そこから海溝で沈む */
 const SeaAgeLayer = (() => {
@@ -1920,6 +1959,7 @@ if (MapLayer) {
     { key: "wind", label: "風", get: () => VisualParticles.visible, set: v => { VisualParticles.visible = v; } },
     { key: "rain", label: "雨", get: () => layerById("rain")?.visible, set: v => setLayer("rain", v) },
     { key: "cloud-ir", label: "雲", get: () => layerById("cloud-ir")?.visible, set: v => setLayer("cloud-ir", v) },
+    { key: "front", label: "気温の境目", get: () => !!FrontLayer?.visible, set: v => FrontLayer?.setOn(v).then(() => typeof syncChips === "function" && syncChips()) },
     { key: "pressure", label: "気圧", get: () => layerById("pressure")?.visible, set: v => setLayer("pressure", v) },
     { key: "currents", label: "海流", get: () => !!CurrentLayer?.visible, set: v => CurrentLayer?.setOn(v) },
     { key: "sst-anom", label: "海水温（平年差）", get: () => layerById("sst-anom")?.visible, set: v => setLayer("sst-anom", v) },
@@ -1938,7 +1978,7 @@ if (MapLayer) {
     { key: "capitals", label: "★ 首都", get: () => CapitalLayer?.visible, set: v => { if (CapitalLayer) CapitalLayer.visible = v; } },
     { key: "map", label: "国境・地名", get: () => MapLayer.visible, set: v => { MapLayer.visible = v; box.querySelector(".viewbox").hidden = !v; } },
     { key: "sky", label: "✦ 星座", get: () => SkyLayer?.visible, set: v => { if (SkyLayer) SkyLayer.visible = v; } },
-  ].filter(c => c.key === "wind" || c.key === "map" || c.key === "interior" || c.key === "platemove" || (c.key === "seaage" ? !!SeaAgeLayer : false) || (c.key === "quakehist" ? !!QuakeHistLayer : false) || (c.key === "currents" ? !!CurrentLayer : false) || ((c.key === "sky" || c.key === "milky") ? !!SkyLayer : c.key === "guide" ? !!GuideLayer : c.key === "aurora" ? !!AuroraLayer : c.key === "plates" ? !!PlateLayer : c.key === "capitals" ? !!CapitalLayer : !!layerById(c.key)));
+  ].filter(c => c.key === "wind" || c.key === "map" || (c.key === "front" ? !!FrontLayer : false) || c.key === "interior" || c.key === "platemove" || (c.key === "seaage" ? !!SeaAgeLayer : false) || (c.key === "quakehist" ? !!QuakeHistLayer : false) || (c.key === "currents" ? !!CurrentLayer : false) || ((c.key === "sky" || c.key === "milky") ? !!SkyLayer : c.key === "guide" ? !!GuideLayer : c.key === "aurora" ? !!AuroraLayer : c.key === "plates" ? !!PlateLayer : c.key === "capitals" ? !!CapitalLayer : !!layerById(c.key)));
   /* 見方のセット（プリセット）：物語ごとに、関係が見える組み合わせをまとめて出す。そこから1つずつ足し引きもできる。
      国境・地名、赤道・日付変更線は「下敷き」なので、セットでは変えない */
   const PRESETS = [
@@ -1984,7 +2024,7 @@ if (MapLayer) {
   if (card) card.querySelector(".tx").onclick = () => { card.hidden = true; };
   /* 層のボタンを分野ごとの枠に分ける（ダッシュボードのように）。枠はたためる（たたんだ状態はこの端末にだけ覚える） */
   const GROUPS = [
-    { key: "air", en: "AIR", ja: "空気", keys: ["wind", "rain", "cloud-ir", "pressure"] },
+    { key: "air", en: "AIR", ja: "空気", keys: ["wind", "rain", "cloud-ir", "pressure", "front"] },
     { key: "sea", en: "SEA", ja: "海", keys: ["currents", "sst-anom", "sea-ice"] },
     { key: "earth", en: "EARTH", ja: "大地", keys: ["quakes", "quakehist", "plates", "platemove", "seaage", "volcanoes", "interior"] },
     { key: "space", en: "SPACE", ja: "宇宙", keys: ["sats", "aurora", "milky", "sky"] },
@@ -2014,6 +2054,7 @@ if (MapLayer) {
       <p class="note wname-note" hidden></p>
       <p class="note wdir-legend" hidden><span style="color:rgb(255,153,71)">━ 東へ吹く風</span>　<span style="color:rgb(77,184,255)">━ 西へ吹く風</span>　（線の色を速さではなく向きで。データはそのまま）</p>`);
     const wh = box.querySelector(".windh"); if (wh) airB.appendChild(wh);
+    if (FrontLayer) airB.insertAdjacentHTML("beforeend", `<p class="note fr-note" hidden><b>気温の境目</b>：約1.5km（850 hPa）の気温を、<span style="color:rgb(90,150,255)">青 寒い</span> → <span style="color:rgb(255,170,80)">橙 暖かい</span> でうすく塗り、気温が急に変わる所（寒い空気と暖かい空気の境目）を<span style="color:rgb(255,240,180)">明るく</span>光らせています。前線は、こういう境目にできます。低気圧の雲や雨の帯と重ねて見てください。<b>天気図の前線そのものではありません</b>（前線は気象庁の予報官が判断して引くものです。本物は<a href="https://www.jma.go.jp/bosai/weather_map/" target="_blank" rel="noopener" style="color:var(--accent)">気象庁の天気図</a>で）。高い山や南極・グリーンランドの氷床の上は、この高さが地面の下になるので出していません</p>`);
   }
   const mapB = grpBody("map"); if (mapB) mapB.appendChild(box.querySelector(".viewbox"));
   /* 海流：出している間は風の線をお休みにする（消したのではなく、やめると元に戻す） */
@@ -2091,7 +2132,7 @@ if (MapLayer) {
       + (a.length < MY_MAX ? `<button type="button" class="add" data-myadd="1">＋ いまの組み合わせを保存</button>` : "");
   };
 
-  var syncChips = () => { box.querySelectorAll("[data-chip]").forEach(b => b.setAttribute("aria-pressed", String(!!CHIPS.find(c => c.key === b.dataset.chip).get()))); syncCounts(); const qn = box.querySelector(".qh-note"); if (qn) qn.hidden = !QuakeHistLayer?.visible; const pn = box.querySelector(".pm-note"); if (pn) pn.hidden = !PlateMoveLayer.visible; const sn = box.querySelector(".sa-note"); if (sn) sn.hidden = !SeaAgeLayer?.visible; };
+  var syncChips = () => { box.querySelectorAll("[data-chip]").forEach(b => b.setAttribute("aria-pressed", String(!!CHIPS.find(c => c.key === b.dataset.chip).get()))); syncCounts(); const qn = box.querySelector(".qh-note"); if (qn) qn.hidden = !QuakeHistLayer?.visible; const fn = box.querySelector(".fr-note"); if (fn) fn.hidden = !FrontLayer?.visible; const pn = box.querySelector(".pm-note"); if (pn) pn.hidden = !PlateMoveLayer.visible; const sn = box.querySelector(".sa-note"); if (sn) sn.hidden = !SeaAgeLayer?.visible; };
   /* 地名の地球儀：文字が見やすいよう、選べる層をしぼった固定モード。入る前の状態を覚えておき、出るときに戻す */
   const NAMES_OK = ["map", "capitals", "guide", "plates", "platemove", "seaage", "quakes", "quakehist", "volcanoes"], NAMES_OFF_AT_START = ["quakes", "quakehist", "volcanoes", "plates", "platemove", "seaage"];
   const OVERLAYS = ["quakes", "volcanoes", "plates", "sats", "aurora", "milky", "sky", "capitals"];
@@ -2226,6 +2267,7 @@ renderer.domElement.addEventListener("pointerup", e => {
   const ll = `${Math.abs(la).toFixed(1)}°${la >= 0 ? "N" : "S"} ${Math.abs(lo).toFixed(1)}°${lo >= 0 ? "E" : "W"}`;
   document.getElementById("d-pick").innerHTML = `<span class="num">${ll}</span>　風速${field.meta.level && field.meta.level !== "地上10m" ? "（" + field.meta.level.replace(/（.*）/, "") + "）" : ""} <span class="num">${sp.toFixed(1)} m/s</span>　${DIRS[Math.round(from / 22.5) % 16]}の風 <span style="color:var(--ink-faint)">（${wm.kind}・格子から補間）</span>`
     + SCALAR_LAYERS.filter(l => l.visible).map(l => presentValue(l, l.field.sample(lo, la, Clock.now()))).filter(Boolean).map(t => "<br>" + t).join("")
+    + (FrontLayer?.visible ? (() => { const f = FrontLayer.at(lo, la); return f ? `<br>約1.5kmの気温 <span class="num">${f[0]}℃</span>・変わり方 <span class="num">${f[1].toFixed(1)}℃/100km</span>${f[1] >= 3 ? "（境目）" : ""}` : ""; })() : "")
     + (PlateMoveLayer.visible ? (() => { const m = PlateMoveLayer.at(lo, la); if (!m) return ""; return `<br>プレートの動き（研究モデル） <span class="num">1年に約${(m[0] / 10).toFixed(1)} cm</span>　${DIRS[Math.round(m[1] / 22.5) % 16]}へ（${PLATE_JA[m[2]] ? PLATE_JA[m[2]] + "プレート" : m[2]}）`; })() : "")
     + (SeaAgeLayer?.visible ? (() => { const a = SeaAgeLayer.at(lo, la); return a === null ? "" : `<br>海底の年齢（推定） <span class="num">約${a >= 100 ? (a / 100).toFixed(1) + "億" : a * 100 + "万"}年</span>`; })() : "")
     + (CurrentLayer?.visible ? (() => { const c = CurrentLayer.sample(lo, la); if (!c) return ""; const sp = Math.hypot(c[0], c[1]), to = (Math.atan2(c[0], c[1]) / D2R + 360) % 360;
