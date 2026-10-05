@@ -324,7 +324,7 @@ def build(fields: dict, out: str, source_url: str | None):
                 "caution": "天気図の前線ではありません（前線は気象庁の予報官が判断して引くものです）。高い山や氷床の上は、この高さが地面の下になるので出していません",
             },
         }
-        log(f"気温の境目: 上位1%の急さ {g99:.1f} ℃/100km")
+        print(f"::notice::気温の境目 付加: 850 hPa の気温から計算／上位1%の急さ {g99:.1f} ℃/100km／地表気圧 {'あり' if pr is not None else 'なし'}", flush=True)
     if ic is not None:
         manifest["layers"]["sea-ice"] = {
             "type": "scalar", "file": "seaice.bin", "format": "uint8",
