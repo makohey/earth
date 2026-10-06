@@ -813,7 +813,7 @@ function createAuroraLayer() {
   };
 }
 /* ===== プレートの境目（Bird 2003 PB2002、ODC-By 1.0） =====
-   色は紫の系統（ほかの層で使っていない色）。線の形で種類を分ける：実線＝近づく（沈み込む・ぶつかる）／破線＝広がる／点線＝ずれる */
+   色は紫の系統（ほかの層で使っていない色）。線はすべて一本線。種類は紫の濃さと光の太さで分ける：濃い紫＝近づく／薄い紫＝広がる／くすんだ紫＝ずれる */
 const PLATE_JA = { PA: "太平洋", NA: "北アメリカ", EU: "ユーラシア", AF: "アフリカ", AN: "南極", IN: "インド", AU: "オーストラリア", SA: "南アメリカ", NZ: "ナスカ", CO: "ココス",
   PS: "フィリピン海", AR: "アラビア", OK: "オホーツク", AM: "アムール", CA: "カリブ", JF: "ファンデフカ", SO: "ソマリア", SU: "スンダ", YA: "揚子", SC: "スコシア", RI: "リベラ", MA: "マリアナ", ON: "沖縄", TO: "トンガ", KE: "ケルマデック", NH: "ニューヘブリディーズ", BS: "バンダ海", AS: "エーゲ海", AT: "アナトリア", PM: "パナマ", NB: "北ビスマルク", SB: "南ビスマルク", SS: "ソロモン海", TI: "ティモール", BH: "バーズヘッド", CL: "キャロライン", BU: "ビルマ", MS: "モルッカ海", ND: "北アンデス", AP: "アルティプラノ", EA: "イースター", JZ: "ファンフェルナンデス", GP: "ガラパゴス", MN: "マヌス", WL: "ウッドラーク", FT: "フツナ", NI: "ニウアフォウ", BR: "バルモラル礁", CR: "コンウェイ礁", MO: "モーンズ礁", SW: "サンドウィッチ", SL: "シェトランド" };
 const PLATE_LABELS = [["太平洋プレート", 2, -150], ["北アメリカプレート", 48, -100], ["ユーラシアプレート", 55, 70], ["アフリカプレート", 5, 18], ["南極プレート", -75, 40],
@@ -823,7 +823,7 @@ const PLATE_KIND = [{ ja: "広がる", verb: "離れる", line: "dashed", color:
 async function createPlateLayer() {
   const d = await getJSON("data/map/plates.json"), R = 1.0026;
   const group = new THREE.Group(); group.renderOrder = 1.95; group.visible = false; scene.add(group);
-  for (const [k, look] of [[[2, 3], { dash: 0, gap: 0, op: 0.95 }], [[0], { dash: 0.010, gap: 0.006, op: 0.9 }], [[1], { dash: 0.003, gap: 0.004, op: 0.75 }]]) {
+  for (const [k, look] of [[[2, 3], { dash: 0, gap: 0, op: 0.95 }], [[0], { dash: 0, gap: 0, op: 0.9 }], [[1], { dash: 0, gap: 0, op: 0.7 }]]) {
     const sel = d.steps.filter(r => k.includes(r[4])), p = new Float32Array(sel.length * 6);
     sel.forEach((r, j) => { toXYZ(r[1], r[0], R, p, j * 6); toXYZ(r[3], r[2], R, p, j * 6 + 3); });
     const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.BufferAttribute(p, 3));
@@ -855,8 +855,8 @@ async function createPlateLayer() {
     userOn: false,
     profile: {
       describe() {
-        const sw = (k, style) => `<span style="display:inline-block;width:22px;border-top:2px ${style} #${PLATE_KIND[k].color.toString(16)};vertical-align:middle;margin-right:4px"></span>`;
-        return `地球の表面は、十数枚の大きな岩の板（プレート）に分かれていて、1年に数cmずつ動いています。境目では地震が起き、火山ができます<br>${sw(3, "solid")}近づく（沈み込む・ぶつかる）　${sw(0, "dashed")}広がる（海嶺など）　${sw(1, "dotted")}ずれる<br>線をタップで、どのプレートの境目か・1年に何cm動くか。「地震」と一緒に出すと、点が線の上に並ぶのが見えます<br>日本のまわりは、このモデルではオホーツク・アムールプレートに分かれています（日本の教科書では北アメリカ・ユーラシアプレートとして扱うことが多い）<br>出典：Bird (2003) "An updated digital model of plate boundaries"（PB2002）、変換 Hugo Ahlenius / Nordpil（ODC-By 1.0）`;
+        const sw = (k, style) => `<span style="display:inline-block;width:22px;border-top:3px solid #${PLATE_KIND[k].color.toString(16)};vertical-align:middle;margin-right:4px"></span>`;
+        return `地球の表面は、十数枚の大きな岩の板（プレート）に分かれていて、1年に数cmずつ動いています。境目では地震が起き、火山ができます<br>${sw(3)}近づく（沈み込む・ぶつかる）　${sw(0)}広がる（海嶺など）　${sw(1)}ずれる<br>線をタップで、どのプレートの境目か・1年に何cm動くか。「地震」と一緒に出すと、点が線の上に並ぶのが見えます<br>日本のまわりは、このモデルではオホーツク・アムールプレートに分かれています（日本の教科書では北アメリカ・ユーラシアプレートとして扱うことが多い）<br>出典：Bird (2003) "An updated digital model of plate boundaries"（PB2002）、変換 Hugo Ahlenius / Nordpil（ODC-By 1.0）`;
       },
       present(r) { const k = PLATE_KIND[r[4]], [a, b] = r[6].split(/[-\/\\]/);
         return `プレートの境目：${name(a)} と ${name(b)}（<span class="num">${k.ja}</span>）　1年に約<span class="num">${(r[5] / 10).toFixed(1)} cm</span> ${k.verb} <span style="color:var(--ink-faint)">（研究モデルの値）</span>`; },
