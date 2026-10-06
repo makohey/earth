@@ -1483,7 +1483,7 @@ const PlateMoveLayer = (() => {
       } else { la = Math.asin(Math.random() * 2 - 1) / D2R; lo = Math.random() * 360 - 180; }
       toXYZ(la, lo, 1, tmp, 0); const p = plateAt(tmp[0], tmp[1], tmp[2]);
       if (p === G.none || !plates[p].w) continue;
-      X[k*3] = tmp[0]; X[k*3+1] = tmp[1]; X[k*3+2] = tmp[2]; pid[k] = p; age[k] = 0; life[k] = 240 + Math.random() * 300; return;
+      X[k*3] = tmp[0]; X[k*3+1] = tmp[1]; X[k*3+2] = tmp[2]; pid[k] = p; age[k] = 0; life[k] = 420 + Math.random() * 420; return;
     }
     life[k] = 0;
   }
@@ -1491,30 +1491,70 @@ const PlateMoveLayer = (() => {
     const [meta, bin, pl] = await Promise.all([getJSON("data/map/platemotion.json"), getBin("data/map/platemotion.bin"), getJSON("data/map/plates.json")]);
     plates = meta.plates; G = meta.grid; grid = new Uint8Array(bin);
     ridges = pl.steps.filter(s => s[4] === 0).map(s => [s[0], s[1], s[2], s[3]]);   /* 「広がる」境目 */
-    for (let k = 0; k < N; k++) { spawn(k); age[k] = Math.random() * life[k]; }
+    for (let k = 0; k < N; k++) { spawn(k); age[k] = Math.random() * life[k]; PX[k*3] = X[k*3]; PX[k*3+1] = X[k*3+1]; PX[k*3+2] = X[k*3+2]; }
+    /* 線（尻尾）：粒の通った跡を短い帯で残す。帯は画面の上で太さを付けた四角（海流と同じ作り）。区間は KEEP コマに1回だけ書き、SLOTS 区間ぶん残して古い順に薄くする */
+    const S = N * SLOTS, VN = S * 4;
+    attr = { a: new THREE.BufferAttribute(new Float32Array(VN * 3), 3).setUsage(THREE.DynamicDrawUsage),
+             b: new THREE.BufferAttribute(new Float32Array(VN * 3), 3).setUsage(THREE.DynamicDrawUsage),
+             birth: new THREE.BufferAttribute(new Float32Array(VN).fill(-1e6), 1).setUsage(THREE.DynamicDrawUsage) };
+    const side = new Float32Array(VN), end = new Float32Array(VN), idx = new Uint32Array(S * 6);
+    for (let q = 0; q < S; q++) {
+      const v = q * 4; side[v] = -1; side[v+1] = 1; side[v+2] = -1; side[v+3] = 1; end[v+2] = 1; end[v+3] = 1;
+      idx.set([v, v+1, v+2, v+2, v+1, v+3], q * 6);
+    }
     const geo = new THREE.BufferGeometry();
-    const pos = new Float32Array(N * 3), al = new Float32Array(N);
-    geo.setAttribute("position", new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage)); geo.setAttribute("aA", new THREE.BufferAttribute(al, 1).setUsage(THREE.DynamicDrawUsage));
-    pts = new THREE.Points(geo, new THREE.ShaderMaterial({
-      uniforms: { uPR: { value: renderer.getPixelRatio() } }, transparent: true, depthWrite: false,
-      vertexShader: `attribute float aA; uniform float uPR; varying float vA; void main(){ vA = aA; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); gl_PointSize = 2.6 * uPR; }`,
-      fragmentShader: `varying float vA; void main(){ vec2 p = gl_PointCoord - 0.5; float r = length(p); if (r > 0.5 || vA <= 0.0) discard; gl_FragColor = vec4(vec3(0.96, 0.95, 1.0), vA * (1.0 - smoothstep(0.25, 0.5, r))); }`,
-    }));
-    pts.frustumCulled = false; pts.renderOrder = 3.3; pts.visible = on; scene.add(pts); ready = true;
+    geo.setAttribute("position", attr.a); geo.setAttribute("aB", attr.b); geo.setAttribute("aBirth", attr.birth);
+    geo.setAttribute("aSide", new THREE.BufferAttribute(side, 1)); geo.setAttribute("aEnd", new THREE.BufferAttribute(end, 1));
+    geo.setIndex(new THREE.BufferAttribute(idx, 1));
+    const res = new THREE.Vector2(); renderer.getDrawingBufferSize(res);
+    mat = new THREE.ShaderMaterial({
+      uniforms: { uTime: { value: 0 }, uTrail: { value: SLOTS }, uRes: { value: res }, uWidth: { value: Math.max(1.6, 1.0 * renderer.getPixelRatio()) } },
+      transparent: true, depthWrite: false, side: THREE.DoubleSide,
+      vertexShader: `
+        attribute vec3 aB; attribute float aSide; attribute float aEnd; attribute float aBirth;
+        uniform float uTime; uniform float uTrail; uniform vec2 uRes; uniform float uWidth;
+        varying float vA; varying float vEdge;
+        void main(){
+          vA = (uTime - aBirth) / uTrail; vEdge = aSide;
+          vec4 pa = projectionMatrix * modelViewMatrix * vec4(position, 1.0), pb = projectionMatrix * modelViewMatrix * vec4(aB, 1.0);
+          vec2 d = (pb.xy / pb.w - pa.xy / pa.w) * uRes; float L = length(d); d = L > 1e-4 ? d / L : vec2(1.0, 0.0);
+          vec4 p = mix(pa, pb, aEnd);
+          p.xy += vec2(-d.y, d.x) * aSide * uWidth / uRes * p.w;
+          gl_Position = p;
+        }`,
+      fragmentShader: `
+        varying float vA; varying float vEdge;
+        void main(){
+          if (vA < 0.0 || vA > 1.0) discard;
+          float fade = pow(1.0 - vA, 1.2), soft = 1.0 - 0.5 * vEdge * vEdge;
+          gl_FragColor = vec4(vec3(0.97, 0.95, 1.0), fade * soft * 0.9);
+        }`,
+    });
+    pts = new THREE.Mesh(geo, mat); pts.frustumCulled = false; pts.renderOrder = 3.3; pts.visible = on; scene.add(pts); ready = true;
   }
+  const SLOTS = 40, KEEP = 8, PX = new Float32Array(N * 3), fresh = new Uint8Array(N);
+  let attr = null, mat = null, frame = 0, sub = 0;
   function step(dtScale) {
-    const pos = pts.geometry.attributes.position.array, al = pts.geometry.attributes.aA.array, dMyr = MYR_PER_SEC / 60 * dtScale;
+    const dMyr = MYR_PER_SEC / 60 * dtScale;
     for (let k = 0; k < N; k++) {
-      if (life[k] <= 0 || age[k] > life[k]) spawn(k);
+      if (life[k] <= 0 || age[k] > life[k]) { spawn(k); fresh[k] = 1; }
       const w = plates[pid[k]].w; if (!w) { life[k] = 0; continue; }
       v3.set(X[k*3], X[k*3+1], X[k*3+2]); w3.set(w[0], w[1], w[2]);
       t3.crossVectors(w3, v3).multiplyScalar(dMyr); v3.add(t3).normalize();   /* v = ω × r（rad/100万年） */
       X[k*3] = v3.x; X[k*3+1] = v3.y; X[k*3+2] = v3.z; age[k] += dtScale;
-      if (plateAt(v3.x, v3.y, v3.z) !== pid[k]) { life[k] = 0; al[k] = 0; continue; }   /* ほかのプレートに入った＝沈む・押し合う所で消える */
-      pos[k*3] = v3.x * R; pos[k*3+1] = v3.y * R; pos[k*3+2] = v3.z * R;
-      const f = age[k] / life[k]; al[k] = Math.min(1, f * 8, (1 - f) * 6) * 0.85;
+      if (plateAt(v3.x, v3.y, v3.z) !== pid[k]) life[k] = 0;              /* ほかのプレートに入った＝沈む・押し合う所で消える（尻尾は残って薄れる） */
     }
-    pts.geometry.attributes.position.needsUpdate = true; pts.geometry.attributes.aA.needsUpdate = true;
+    if (++sub < KEEP) return;
+    sub = 0; frame++; mat.uniforms.uTime.value = frame;
+    const q0 = (frame % SLOTS) * N, A = attr.a.array, B = attr.b.array, Bi = attr.birth.array;
+    for (let k = 0; k < N; k++) {
+      const v4 = (q0 + k) * 4;
+      if (fresh[k] || life[k] <= 0) { for (let m = 0; m < 4; m++) Bi[v4 + m] = -1e6; fresh[k] = 0; PX[k*3] = X[k*3]; PX[k*3+1] = X[k*3+1]; PX[k*3+2] = X[k*3+2]; continue; }
+      for (let m = 0; m < 4; m++) { const p = (v4 + m) * 3;
+        A[p] = PX[k*3] * R; A[p+1] = PX[k*3+1] * R; A[p+2] = PX[k*3+2] * R; B[p] = X[k*3] * R; B[p+1] = X[k*3+1] * R; B[p+2] = X[k*3+2] * R; Bi[v4 + m] = frame; }
+      PX[k*3] = X[k*3]; PX[k*3+1] = X[k*3+1]; PX[k*3+2] = X[k*3+2];
+    }
+    attr.a.needsUpdate = true; attr.b.needsUpdate = true; attr.birth.needsUpdate = true;
   }
   return {
     get visible() { return on; },
@@ -2064,7 +2104,7 @@ if (MapLayer) {
   const earthB = grpBody("earth");
   if (earthB) earthB.insertAdjacentHTML("beforeend", `<p class="note int-note" hidden><b>地球の中（断面）</b>：日本を東西に通る断面と、東経125°の断面で、地球を4分の1切り取っています。層の深さは地震波から作られた標準モデル（PREM）、切り口の色は深さごとの温度の推定（文献の代表的な値で、数百℃の幅があります）。切り取った中の点は、1990〜2025年の M5.0 以上の地震を本当の深さに置いたものです。プレートの境目（地表の線）も一緒に出しています。点の列が地表の境目（海溝）から始まって、斜めに深くなっていくのを見てください（色＝深さ：<span style="color:rgb(255,158,64)">橙 浅い〜70km</span>／<span style="color:rgb(160,240,120)">黄緑 70〜300km</span>／<span style="color:rgb(130,170,255)">青紫 300km〜</span>）。日本の下で、点が斜めに深くなっていく列が、沈み込んだ海のプレートだと考えられています。中の動き（マントル対流など）は、まだ入れていません</p>`);
   if (earthB && QuakeHistLayer) earthB.insertAdjacentHTML("beforeend", `<p class="note qh-note" hidden><b>過去の地震（深さ）</b>：1990〜2025年の M5.0 以上、約6万件の震央です（USGS の記録。予測ではありません）。色＝震源の深さ：<span style="color:rgb(255,158,64)">橙 〜70km</span>／<span style="color:rgb(220,235,90)">黄</span>〜<span style="color:rgb(120,240,140)">黄緑 70〜300km</span>／<span style="color:rgb(130,170,255)">青紫 300km〜</span>。ほとんどがプレートの境目に並びます。海溝から陸側へ、橙→黄緑→青紫と深くなっていく所は、海のプレートがその向きへ沈み込んでいると考えられている所です。「プレート」と一緒に出すと見比べやすくなります</p>`);
-  if (earthB) earthB.insertAdjacentHTML("beforeend", `<p class="note pm-note" hidden><b>プレートの動き</b>：研究モデル（PB2002、Bird 2003）の回り方から計算した、ここ数百万年の平均の動きです。基準は「地球全体として回っていない」と見る取り方（NNR）。点はプレートごとにまとまって動き、ほかのプレートに入ると消えます（沈む・押し合う所）。新しい点の半分は「広がる」境目（海嶺）の脇から出しています（生まれる所の演出）。速さは早送りで、1秒でおよそ80万年ぶん（本物は1年に数cm）。地表をタップすると、その場所の速さと向きが出ます</p>
+  if (earthB) earthB.insertAdjacentHTML("beforeend", `<p class="note pm-note" hidden><b>プレートの動き</b>：研究モデル（PB2002、Bird 2003）の回り方から計算した、ここ数百万年の平均の動きです。基準は「地球全体として回っていない」と見る取り方（NNR）。線は通った跡で、先頭がいまの位置です。プレートごとにまとまって動き、ほかのプレートに入ると消えます（沈む・押し合う所）。新しい線の半分は「広がる」境目（海嶺）の脇から出しています（生まれる所の演出）。速さは早送りで、1秒でおよそ80万年ぶん（本物は1年に数cm）。地表をタップすると、その場所の速さと向きが出ます</p>
     <p class="note sa-note" hidden><b>海底の年齢</b>：海の底の岩ができてから何年か（研究モデル、Seton et al. 2020）。<span style="color:rgb(255,70,55)">赤 生まれたて</span> → <span style="color:rgb(245,224,80)">黄 約4千万年</span> → <span style="color:rgb(110,220,115)">緑 約7千万年</span> → <span style="color:rgb(70,185,240)">水色 約1億1千万年</span> → <span style="color:rgb(110,100,235)">青紫 約1億8千万年</span>。海嶺で生まれた海底は、両側へ運ばれながら古くなり、海溝で沈みます。陸と大陸棚はデータがありません</p>`);
   let intSaved = null;
   const intSync = on => {
