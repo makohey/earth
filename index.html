@@ -88,6 +88,7 @@
   #spinbadge b{color:var(--accent);font-weight:600;font-size:11.5px}
   #spinbadge span{color:var(--ink-faint)}
   .peek,.hint{transition:opacity .6s}
+  body.objet #dashfab{opacity:0;pointer-events:none}
   body.objet .peek,body.objet .hint,body.objet .peek-pick{opacity:0!important;pointer-events:none}
   #spinbadge[hidden]{display:none}
   #tourcard{position:fixed;left:16px;right:16px;bottom:calc(70px + env(safe-area-inset-bottom,0px));max-width:520px;margin:0 auto;z-index:4;background:var(--panel);border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);border-radius:12px;padding:12px 40px 12px 14px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
@@ -125,6 +126,7 @@
   .lens-btn[aria-expanded="true"]{border-color:var(--accent);color:var(--accent)}
   #spinfab{top:calc(64px + env(safe-area-inset-top,0px))}
   #spinfab[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);background:rgba(143,227,212,.14)}
+  #dashfab{top:calc(116px + env(safe-area-inset-top,0px));text-decoration:none}
   .lens-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
   .lens-panel{position:fixed;right:16px;top:calc(64px + env(safe-area-inset-top,0px));width:min(380px,calc(100% - 32px));
     background:var(--panel);border:1px solid var(--line);border-radius:14px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
@@ -192,6 +194,9 @@
 <button class="lens-btn" id="spinfab" type="button" aria-pressed="false" aria-label="地球を回す（自転の演出）" title="地球を回す（自転の演出）">
   <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 11a7 7 0 1 1-2.05-4.95"/><path d="M16.5 2.8v3.6h-3.6"/></svg>
 </button>
+<a class="lens-btn" id="dashfab" href="dashboard.html" target="_blank" rel="noopener" aria-label="地点ダッシュボードを別のタブで開く" title="地点ダッシュボード（別のタブ）">
+  <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="2"/><rect x="12" y="3" width="7" height="5" rx="2"/><rect x="12" y="10" width="7" height="9" rx="2"/><rect x="3" y="14" width="7" height="5" rx="2"/></svg>
+</a>
 <section class="lens-panel" id="lens" aria-label="Lens" hidden>
   <div class="detail" id="detail">
     <div class="caution-box"><b>これは地球を眺めるための地球儀で、天気予報ではありません。</b><br>風・雨・気圧・海氷は数値モデルの計算結果、雲は衛星の画像、地震は USGS の解析を、そのまま描いたものです。オーロラ帯は出やすい場所の目安で、揺らぎは演出です（いまのオーロラではありません）。ISS はいまの位置の計算値です。気象庁の予報・警報・地震情報ではありません。台風や大雨・地震への備えは、必ず<a href="https://www.jma.go.jp/bosai/" target="_blank" rel="noopener">気象庁の防災情報</a>で確かめてください。</div>

@@ -2328,6 +2328,7 @@ renderer.domElement.addEventListener("pointerup", e => {
     + (CurrentLayer?.visible ? (() => { const c = CurrentLayer.sample(lo, la); if (!c) return ""; const sp = Math.hypot(c[0], c[1]), to = (Math.atan2(c[0], c[1]) / D2R + 360) % 360;
         return `<br>海流（${CurrentLayer.meta.month}月のいつもの流れ） <span class="num">${sp.toFixed(2)} m/s</span>　${DIRS[Math.round(to / 22.5) % 16]}へ${Number.isNaN(c[2]) ? "" : `・水温（平年） <span class="num">${c[2].toFixed(1)}℃</span>`}`; })() : "")
     + FEATURE_LAYERS.filter(l => l.shown).map(l => { const f = l.nearest(lo, la, 0.5 + 1.2 * (camera.position.length() - 1)); return f ? "<br>" + (l.profile.present ? l.profile.present(f) : presentObs(f)) : ""; }).join("");
+  { const df = document.getElementById("dashfab"); if (df) df.href = `dashboard.html?lat=${la.toFixed(2)}&lon=${lo.toFixed(2)}`; }   /* タップした場所でダッシュボードを開けるように */
   showPick(document.getElementById("d-pick").innerHTML.replace(/<span style="color:var\(--ink-faint\)">[^<]*<\/span>/g, ""));   // 項目ごとに改行したまま
 });
 const hint = document.getElementById("hint"); let hintGone = false;
