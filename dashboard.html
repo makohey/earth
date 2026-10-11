@@ -236,6 +236,9 @@ function drawMap() {
   cv.width = r.width * dpr; cv.height = r.height * dpr; const x = cv.getContext("2d"); x.setTransform(dpr, 0, 0, dpr, 0, 0);
   const W = r.width, H = r.height, cx = W / 2, cy = H / 2, k = view.ppd;
   x.fillStyle = "#081226"; x.fillRect(0, 0, W, H);
+  if (D.cloud) { const c = D.cloud; x.imageSmoothingEnabled = true; x.globalAlpha = 0.9;   /* 衛星の雲（赤外）：海の上の台風や雲の帯を探せるように */
+    for (const sft of [-360, 0, 360]) x.drawImage(c.img, cx + (c.lon0 + sft - view.lon) * k, cy - (c.lat0 - view.lat) * k, c.nx * c.dx * k, c.ny * c.dy * k);
+    x.globalAlpha = 1; }
   x.strokeStyle = "rgba(150,172,226,.12)"; x.lineWidth = 1;
   for (let g = -180; g <= 180; g += 15) { for (const s of [-360, 0, 360]) { const px = cx + (g + s - view.lon) * k; if (px > -2 && px < W + 2) { x.beginPath(); x.moveTo(px, 0); x.lineTo(px, H); x.stroke(); } } }
   for (let g = -75; g <= 75; g += 15) { const py = cy - (g - view.lat) * k; x.beginPath(); x.moveTo(0, py); x.lineTo(W, py); x.stroke(); }
@@ -246,7 +249,7 @@ function drawMap() {
         if (pen && Math.abs(lo - plon) < 180) x.lineTo(px, py); else x.moveTo(px, py); pen = true; plon = lo; }
       x.stroke(); } }
   if (cur) { for (const s of [-360, 0, 360]) { const px = cx + (cur.lon + s - view.lon) * k, py = cy - (cur.lat - view.lat) * k; x.fillStyle = "#e9b35a"; x.beginPath(); x.arc(px, py, 4, 0, 7); x.fill(); } }
-  $("mapcoord").textContent = `${Math.abs(view.lat).toFixed(1)}°${view.lat >= 0 ? "N" : "S"}  ${Math.abs(view.lon).toFixed(1)}°${view.lon >= 0 ? "E" : "W"}`;
+  $("mapcoord").textContent = `${Math.abs(view.lat).toFixed(1)}°${view.lat >= 0 ? "N" : "S"}  ${Math.abs(view.lon).toFixed(1)}°${view.lon >= 0 ? "E" : "W"}` + (D.cloud ? `　雲：衛星 ${JSTD.format(new Date(D.cloud.t))}` : "");
 }
 (() => { const w = $("mapwrap"); let drag = null;
   w.addEventListener("pointerdown", e => { drag = { x: e.clientX, y: e.clientY, lon: view.lon, lat: view.lat }; w.setPointerCapture(e.pointerId); w.style.cursor = "grabbing"; });
@@ -256,7 +259,19 @@ function drawMap() {
   $("zin").onclick = () => { view.ppd = Math.min(60, view.ppd * 1.5); drawMap(); };
   $("zout").onclick = () => { view.ppd = Math.max(1.5, view.ppd / 1.5); drawMap(); };
 })();
-function setPicking(on) { $("pick").setAttribute("aria-pressed", String(on)); $("mapbox").hidden = !on; if (on) { if (cur) { view.lon = cur.lon; view.lat = cur.lat; } requestAnimationFrame(drawMap); } }
+async function loadCloud() {          /* 地図を開いたときだけ、一度読む（地球儀が自分のページに置いた雲の画像） */
+  if (D.cloudTried) return; D.cloudTried = true;
+  const L = D.man.layers["cloud-ir"]; if (!L) return;
+  try { const q = new Uint8Array(await getBin(D.base + L.file)), g = L.grid, miss = L.meta.encoding?.missing ?? 255;
+    const cv = document.createElement("canvas"); cv.width = g.nx; cv.height = g.ny; const cx = cv.getContext("2d"), im = cx.createImageData(g.nx, g.ny);
+    for (let i = 0; i < q.length; i++) { const v = q[i], o = i * 4; if (v === miss) { im.data[o + 3] = 0; continue; }
+      const t = Math.max(0, Math.min(1, (v - 118) / 117));   /* 地球儀と同じ見え方：118 より暗い所（地表・低い雲）は透明、235 で真っ白 */
+      im.data[o] = 235; im.data[o + 1] = 242; im.data[o + 2] = 255; im.data[o + 3] = Math.round(235 * Math.pow(t, 0.9)); }
+    cx.putImageData(im, 0, 0); D.cloud = { img: cv, nx: g.nx, ny: g.ny, lon0: g.lon0, lat0: g.lat0, dx: g.dx, dy: g.dy, t: L.meta.validTime };
+    if (!$("mapbox").hidden) drawMap();
+  } catch (_) {}
+}
+function setPicking(on) { $("pick").setAttribute("aria-pressed", String(on)); $("mapbox").hidden = !on; if (on) { if (cur) { view.lon = cur.lon; view.lat = cur.lat; } requestAnimationFrame(drawMap); loadCloud(); } }
 $("pick").onclick = () => setPicking($("pick").getAttribute("aria-pressed") !== "true");
 $("cancel").onclick = () => setPicking(false);
 $("go").onclick = () => { const near = nearestName(view.lat, view.lon); choose(near, view.lat, view.lon); setPicking(false); };
