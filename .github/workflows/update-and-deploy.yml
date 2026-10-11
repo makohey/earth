@@ -42,7 +42,7 @@ jobs:
       - name: ページを組み立てる
         run: |
           mkdir -p _site
-          cp index.html app.js _site/
+          cp index.html app.js dashboard.html _site/
           # 版の番号：app.js の中身から短い印を作って index.html の読み込みに付ける。
           # 中身が変わると別のファイル扱いになり、ブラウザが古い app.js を使い回さない（中身が同じなら印も同じなので、むだに読み直さない）
           V=$(sha256sum app.js | cut -c1-10)

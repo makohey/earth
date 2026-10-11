@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>地点ダッシュボード（試作）</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root{
+    --space:#03050b; --ink:#e4e9f4; --ink-soft:#9ca7bf; --ink-faint:#67718a;
+    --tile:rgba(20,30,58,.72); --tile-edge:rgba(150,172,226,.16); --accent:#8fe3d4; --warn:#e9b35a; --cool:#7fb4ff;
+    --ui:"Zen Kaku Gothic New","Hiragino Sans","Noto Sans JP",system-ui,sans-serif;
+    --mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:radial-gradient(120% 80% at 50% 0%,#0c1730 0%,var(--space) 70%);color:var(--ink);font-family:var(--ui);min-height:100%}
+  body{padding:calc(14px + env(safe-area-inset-top,0px)) 16px 40px}
+  a{color:var(--accent)}
+  header{max-width:1100px;margin:0 auto 12px;display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+  header h1{font-size:20px;margin:0;font-weight:700}
+  header .sub{font-size:12px;color:var(--ink-faint)}
+  header .back{margin-left:auto;font-size:13px}
+  .bar{max-width:1100px;margin:0 auto 14px;display:flex;gap:10px;align-items:center;position:relative}
+  .search{flex:1;position:relative}
+  .search input{width:100%;font:inherit;font-size:16px;color:var(--ink);background:var(--tile);border:1px solid var(--tile-edge);border-radius:12px;padding:11px 14px 11px 38px;outline:none}
+  .search input:focus{border-color:var(--accent)}
+  .search .mag{position:absolute;left:13px;top:50%;transform:translateY(-50%);color:var(--ink-faint);pointer-events:none}
+  .sugg{position:absolute;left:0;right:0;top:calc(100% + 4px);background:#0d1630;border:1px solid var(--tile-edge);border-radius:12px;overflow:hidden;z-index:20}
+  .sugg button{display:flex;width:100%;gap:10px;justify-content:space-between;background:none;border:0;border-bottom:1px solid var(--tile-edge);color:var(--ink);font:inherit;font-size:15px;text-align:left;padding:10px 14px;cursor:pointer}
+  .sugg button:last-child{border-bottom:0}
+  .sugg button:hover,.sugg button.on{background:rgba(143,227,212,.12)}
+  .sugg small{color:var(--ink-faint);font-size:12px}
+  .pick{flex:none;font:inherit;font-size:14px;color:var(--ink);background:var(--tile);border:1px solid var(--tile-edge);border-radius:12px;padding:11px 14px;cursor:pointer;white-space:nowrap}
+  .pick[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);animation:breathe 2s ease-in-out infinite}
+  @keyframes breathe{0%,100%{box-shadow:0 0 0 0 rgba(143,227,212,0);background:var(--tile)}50%{box-shadow:0 0 18px 2px rgba(143,227,212,.55);background:rgba(143,227,212,.18)}}
+  @media (prefers-reduced-motion: reduce){.pick[aria-pressed="true"]{animation:none;box-shadow:0 0 14px 1px rgba(143,227,212,.5);background:rgba(143,227,212,.16)}}
+  .mapbox{max-width:1100px;margin:0 auto 14px;background:var(--tile);border:1px solid var(--accent);border-radius:16px;overflow:hidden}
+  .mapbox[hidden]{display:none}
+  .maphead{display:flex;align-items:center;gap:10px;padding:10px 14px;font-size:13px;color:var(--ink-soft)}
+  .maphead b{color:var(--accent);font-weight:500}
+  .maphead .sp{flex:1}
+  .maphead b{white-space:nowrap}
+  @media (max-width:560px){.maphead .hint{display:none}}
+  .maphead button{white-space:nowrap;font:inherit;font-size:14px;border-radius:10px;padding:7px 14px;cursor:pointer;border:1px solid var(--tile-edge);background:transparent;color:var(--ink)}
+  .maphead button.go{background:var(--accent);color:#06221d;border-color:var(--accent);font-weight:700}
+  .mapwrap{position:relative;height:280px;touch-action:none;cursor:grab}
+  .mapwrap canvas{width:100%;height:100%;display:block}
+  .cross{position:absolute;left:50%;top:50%;width:34px;height:34px;transform:translate(-50%,-50%);pointer-events:none}
+  .zoom{position:absolute;right:10px;bottom:10px;display:flex;flex-direction:column;gap:6px}
+  .zoom button{width:36px;height:36px;border-radius:10px;border:1px solid var(--tile-edge);background:rgba(8,12,24,.8);color:var(--ink);font-size:20px;cursor:pointer}
+  .mapcoord{position:absolute;left:10px;bottom:10px;font-family:var(--mono);font-size:11px;color:var(--ink-soft);background:rgba(8,12,24,.7);padding:3px 7px;border-radius:6px}
+  .grid{max-width:1100px;margin:0 auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}
+  .tile{background:var(--tile);border:1px solid var(--tile-edge);border-radius:18px;padding:14px 16px 12px;display:flex;flex-direction:column;min-height:180px;backdrop-filter:blur(8px)}
+  .tile.wide{grid-column:span 2}
+  @media (max-width:520px){.tile.wide{grid-column:span 1}}
+  .th{font-size:12.5px;color:var(--ink-soft);display:flex;align-items:center;gap:6px;letter-spacing:.04em}
+  .big{font-size:40px;font-weight:500;line-height:1.1;margin-top:8px;font-variant-numeric:tabular-nums}
+  .big small{font-size:16px;color:var(--ink-soft);margin-left:3px}
+  .mid{font-size:17px;font-weight:700;margin-top:2px}
+  .say{font-size:13.5px;color:var(--ink);opacity:.9;margin-top:auto;padding-top:10px;line-height:1.5}
+  .tag{font-family:var(--mono);font-size:10.5px;color:var(--ink-faint);margin-top:8px}
+  .row{display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid var(--tile-edge);padding:7px 0;font-size:14px}
+  .row:last-child{border-bottom:0}
+  .row span:last-child{font-variant-numeric:tabular-nums;color:var(--ink-soft)}
+  .split{display:flex;gap:12px;align-items:center}
+  .split > :first-child{flex:1;min-width:0}
+  .none{color:var(--ink-faint);font-size:14px;margin-top:10px}
+  .place .big{font-size:30px}
+  .warn{color:var(--warn)}
+  .link a{display:block;margin-top:8px;font-size:15px}
+  footer{max-width:1100px;margin:22px auto 0;font-size:11.5px;color:var(--ink-faint);line-height:1.7}
+  #loading{max-width:1100px;margin:30px auto;color:var(--ink-soft)}
+</style>
+</head>
+<body>
+<header>
+  <h1>地点ダッシュボード</h1>
+  <span class="sub">試作・過去と今の記録だけ（予報ではありません）</span>
+  <a class="back" href="./">← 地球儀へ</a>
+</header>
+
+<div class="bar">
+  <div class="search">
+    <svg class="mag" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+    <input id="q" type="search" placeholder="地名で探す（例：京都市・きょうと・太平洋）" autocomplete="off" enterkeyhint="search" aria-label="地名で探す">
+    <div class="sugg" id="sugg" hidden></div>
+  </div>
+  <button class="pick" id="pick" type="button" aria-pressed="false">📍 地点を選ぶ</button>
+</div>
+
+<div class="mapbox" id="mapbox" hidden>
+  <div class="maphead"><b>地点を選んでいます</b><span class="hint">地図を動かして、照準を合わせてください</span><span class="sp"></span>
+    <button type="button" id="cancel">やめる</button><button type="button" class="go" id="go">決定</button></div>
+  <div class="mapwrap" id="mapwrap">
+    <canvas id="map"></canvas>
+    <svg class="cross" viewBox="0 0 34 34" fill="none" stroke="#8fe3d4" stroke-width="2"><circle cx="17" cy="17" r="9"/><path d="M17 0v10M17 24v10M0 17h10M24 17h10"/></svg>
+    <div class="zoom"><button type="button" id="zin" aria-label="拡大">＋</button><button type="button" id="zout" aria-label="縮小">−</button></div>
+    <div class="mapcoord" id="mapcoord"></div>
+  </div>
+</div>
+
+<div id="loading">データを読み込んでいます…</div>
+<div class="grid" id="grid" hidden></div>
+
+<footer>
+  天気の数字は GFS（米国 NOAA の全球モデル）の計算で、約100km四方（1°の升目）の様子です。その場所の観測ではありません。この先の天気は扱いません（気象庁へ）。<br>
+  月と太陽は計算（低い精度の式・数分ずれることがあります）。時刻はすべて日本時間。地震は USGS の記録（M5以上・1990〜2025年）、プレートは PB2002（Bird 2003）、海底の年齢は EarthByte（Seton ほか 2020）。地図は Natural Earth。<br>
+  データは地球儀が自分のページに置いた分だけを読みます（水源へは行きません）。
+</footer>
+
+<script>
+"use strict";
+const D2R = Math.PI / 180;
+const DIRS = ["北","北北東","北東","東北東","東","東南東","南東","南南東","南","南南西","南西","西南西","西","西北西","北西","北北西"];
+const PLATE_JA = { PA:"太平洋",NA:"北アメリカ",EU:"ユーラシア",AF:"アフリカ",AN:"南極",IN:"インド",AU:"オーストラリア",SA:"南アメリカ",NZ:"ナスカ",CO:"ココス",PS:"フィリピン海",AR:"アラビア",OK:"オホーツク",AM:"アムール",CA:"カリブ",JF:"ファンデフカ",SO:"ソマリア",SU:"スンダ",YA:"揚子",SC:"スコシア",RI:"リベラ",MA:"マリアナ",ON:"沖縄",TO:"トンガ",KE:"ケルマデック",NH:"ニューヘブリディーズ",BS:"バンダ海",AS:"エーゲ海",AT:"アナトリア",PM:"パナマ",NB:"北ビスマルク",SB:"南ビスマルク",SS:"ソロモン海",TI:"ティモール",BH:"バーズヘッド",CL:"キャロライン",BU:"ビルマ",MS:"モルッカ海",ND:"北アンデス",AP:"アルティプラノ",EA:"イースター",JZ:"ファンフェルナンデス",GP:"ガラパゴス",MN:"マヌス",WL:"ウッドラーク",FT:"フツナ",NI:"ニウアフォウ",BR:"バルモラル礁",CR:"コンウェイ礁",MO:"モーンズ礁",SW:"サンドウィッチ",SL:"シェトランド" };
+const JST = new Intl.DateTimeFormat("ja-JP", { timeZone: "Asia/Tokyo", hour: "2-digit", minute: "2-digit" });
+const JSTD = new Intl.DateTimeFormat("ja-JP", { timeZone: "Asia/Tokyo", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const getJSON = async u => { const r = await fetch(u, { cache: "no-cache" }); if (!r.ok) throw new Error(u + " " + r.status); return r.json(); };
+const getBin = async u => { const r = await fetch(u); if (!r.ok) throw new Error(u + " " + r.status); return r.arrayBuffer(); };
+const store = { get(k) { try { return localStorage.getItem(k); } catch (_) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (_) {} } };
+
+/* ===== データ（地球儀が自分のページに置いた分だけ） ===== */
+const D = { man: null, base: null, buf: {}, places: [], coast: null, archive: null, quakes: null, plate: null, seaage: null };
+async function loadMain() {
+  for (const b of ["data/latest/", "data/sample/"]) { try { D.man = await getJSON(b + "manifest.json"); D.base = b; break; } catch (_) {} }
+  if (!D.man) throw new Error("データが見つかりません");
+  const want = ["wind-10m", "rain", "pressure", "sst-anom"].filter(id => D.man.layers[id]);
+  await Promise.all(want.map(async id => { D.buf[id] = await getBin(D.base + D.man.layers[id].file); }));
+}
+function scalarSampler(id, buf) {
+  const L = D.man.layers[id]; if (!L || !buf) return null;
+  const g = L.grid, e = L.meta.encoding, q = e.type === "linear" ? new Int16Array(buf) : new Uint8Array(buf), Lm = Math.log1p(e.max || 1);
+  const dec = c => c === e.missing ? NaN : e.type === "log1p" ? (c === e.zero ? 0 : Math.expm1((c - 1) / e.levels * Lm)) : e.type === "raw" ? c : c * e.scale + e.offset;
+  const at = (i, j) => dec(q[Math.min(Math.max(j, 0), g.ny - 1) * g.nx + ((i % g.nx) + g.nx) % g.nx]);
+  return (lon, lat) => {
+    const fx = (((lon - g.lon0) % 360) + 360) % 360 / g.dx, fy = (g.lat0 - lat) / g.dy;
+    if (g.registration !== "point") { const v = at(Math.floor(fx), Math.floor(fy)); return Number.isNaN(v) ? null : v; }
+    const i0 = Math.floor(fx), j0 = Math.min(Math.max(Math.floor(fy), 0), g.ny - 2), tx = fx - i0, ty = Math.min(Math.max(fy - j0, 0), 1);
+    const a = at(i0, j0), b = at(i0 + 1, j0), c = at(i0, j0 + 1), d = at(i0 + 1, j0 + 1);
+    if ([a, b, c, d].some(Number.isNaN)) { const v = at(Math.round(fx), Math.round(fy)); return Number.isNaN(v) ? null : v; }
+    return (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty;
+  };
+}
+function windAt(lon, lat) {
+  const L = D.man.layers["wind-10m"], g = L.grid, raw = new Int16Array(D.buf["wind-10m"]);
+  let x = (((lon - g.lo1) % 360) + 360) % 360 / g.dx, y = Math.min(Math.max((g.la1 - lat) / g.dy, 0), g.ny - 1);
+  const i0 = Math.floor(x) % g.nx, i1 = (i0 + 1) % g.nx, fx = x - Math.floor(x), j0 = Math.floor(y), j1 = Math.min(j0 + 1, g.ny - 1), fy = y - j0;
+  const v = (i, j, k) => raw[2 * (j * g.nx + i) + k] / g.scale;
+  const bil = k => (v(i0, j0, k) * (1 - fx) + v(i1, j0, k) * fx) * (1 - fy) + (v(i0, j1, k) * (1 - fx) + v(i1, j1, k) * fx) * fy;
+  return [bil(0), bil(1)];
+}
+async function loadExtras() {
+  const tasks = [
+    getJSON("data/map/places_jp.json").then(j => j.rows.forEach(([ja, kana, lat, lon]) => D.places.push({ ja, kana, lat, lon, kind: "日本" }))).catch(() => {}),
+    getJSON("data/map/capitals.json").then(j => j.rows.forEach(r => D.places.push({ ja: r[0], kana: "", lat: r[1], lon: r[2], kind: "首都" }))).catch(() => {}),
+    getJSON("data/map/labels.json").then(j => { j.labels.forEach(l => D.places.push({ ja: l.ja, kana: "", lat: l.lat, lon: l.lon, kind: "国" })); j.seas.forEach(l => D.places.push({ ja: l.ja, kana: "", lat: l.lat, lon: l.lon, kind: "海" })); }).catch(() => {}),
+    getBin("data/coast.bin").then(b => { D.coast = new Int16Array(b); }).catch(() => {}),
+  ];
+  await Promise.all(tasks);
+}
+/* 後から読むもの（なくても動く） */
+const later = {
+  async archive() { if (D.archive) return D.archive;
+    try { const idx = await getJSON("data/archive/index.json"); const sets = idx.sets.filter(s => s.layers.includes("pressure")).slice(-10);
+      const out = []; for (const s of sets) { try { const m = await getJSON(`data/archive/${s.id}/meta.json`); const L = m.layers.pressure; const buf = await getBin(`data/archive/${s.id}/${L.file}`);
+        const keep = D.man.layers.pressure; D.man.layers.__tmp = L; const f = scalarSampler("__tmp", buf); delete D.man.layers.__tmp; out.push({ t: new Date(m.validTime), f }); } catch (_) {} }
+      D.archive = { count: idx.sets.length, oldest: idx.sets[0]?.validTime, series: out }; } catch (_) { D.archive = { count: 0, series: [] }; }
+    return D.archive; },
+  async quakes() { if (D.quakes) return D.quakes; try { D.quakes = new Int16Array(await getBin(D.base + D.man.layers["quake-history"].file)); } catch (_) { D.quakes = new Int16Array(0); } return D.quakes; },
+  async plate() { if (D.plate) return D.plate; try { const [m, b] = await Promise.all([getJSON("data/map/platemotion.json"), getBin("data/map/platemotion.bin")]); D.plate = { m, g: new Uint8Array(b) }; } catch (_) { D.plate = null; } return D.plate; },
+  async seaage() { if (D.seaage) return D.seaage; try { const L = D.man.layers["seafloor-age"]; D.seaage = { g: L.grid, a: new Uint8Array(await getBin(D.base + L.file)) }; } catch (_) { D.seaage = null; } return D.seaage; },
+};
+
+/* ===== 空の計算（月と太陽） ===== */
+const S = x => Math.sin(x * D2R), C = x => Math.cos(x * D2R);
+const days = ms => ms / 86400000 + 2440587.5 - 2451545.0;
+const gmst = ms => ((280.46061837 + 360.98564736629 * days(ms)) % 360 + 360) % 360;
+function eclToEq(lam, bet) { const e = 23.44 * D2R, lr = lam * D2R, br = bet * D2R, x = Math.cos(br) * Math.cos(lr), y = Math.cos(br) * Math.sin(lr), z = Math.sin(br);
+  return { ra: Math.atan2(y * Math.cos(e) - z * Math.sin(e), x) / D2R, dec: Math.asin(y * Math.sin(e) + z * Math.cos(e)) / D2R }; }
+function sunPos(ms) { const d = days(ms), g = 357.529 + 0.98560028 * d, lam = 280.460 + 0.9856474 * d + 1.915 * S(g) + 0.020 * S(2 * g); return { ...eclToEq(lam, 0), lam }; }
+function moonPos(ms) {
+  const d = days(ms), L = 218.316 + 13.176396 * d, M = 134.963 + 13.064993 * d, F = 93.272 + 13.229350 * d, Dd = 297.850 + 12.190749 * d, Ms = 357.529 + 0.98560028 * d;
+  const lam = L + 6.289 * S(M) + 1.274 * S(2 * Dd - M) + 0.658 * S(2 * Dd) + 0.214 * S(2 * M) - 0.186 * S(Ms) - 0.114 * S(2 * F);
+  const bet = 5.128 * S(F) + 0.281 * S(M + F) + 0.278 * S(M - F) + 0.173 * S(2 * Dd - F);
+  const age = (((lam - sunPos(ms).lam) % 360 + 360) % 360) / 360 * 29.530589;
+  return { ...eclToEq(lam, bet), age };
+}
+const alt = (p, ms, lat, lon) => { const H = gmst(ms) + lon - p.ra; return Math.asin(S(lat) * S(p.dec) + C(lat) * C(p.dec) * C(H)) / D2R; };
+/** その日（日本時間）の出・入り。h0 は地平線の高さの補正 */
+function riseSet(posFn, h0, lat, lon, dayStartMs) {
+  let rise = null, set = null, prev = alt(posFn(dayStartMs), dayStartMs, lat, lon) - h0, allUp = prev > 0, allDown = prev <= 0;
+  for (let k = 1; k <= 144; k++) { const t = dayStartMs + k * 600000, a = alt(posFn(t), t, lat, lon) - h0;
+    if (a > 0) allDown = false; else allUp = false;
+    if (prev <= 0 && a > 0 && rise == null) rise = t - 600000 * a / (a - prev);
+    if (prev > 0 && a <= 0 && set == null) set = t - 600000 * a / (a - prev);
+    prev = a; }
+  return { rise, set, allUp: allUp && rise == null && set == null, allDown: allDown && rise == null && set == null };
+}
+const jstDayStart = ms => { const j = ms + 9 * 3600000; return j - (j % 86400000) - 9 * 3600000; };
+
+/* ===== 地名さがし ===== */
+const toHira = s => s.replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60));
+const norm = s => toHira(String(s).normalize("NFKC").toLowerCase()).replace(/\s/g, "");
+function findPlaces(q) {
+  const n = norm(q); if (!n) return [];
+  const seen = new Set(), out = [];
+  for (const p of D.places) { const a = norm(p.ja), b = norm(p.kana);
+    const score = a.startsWith(n) || (b && b.startsWith(n)) ? 0 : a.includes(n) || (b && b.includes(n)) ? 1 : -1;
+    if (score < 0) continue; const key = p.ja + p.kind; if (seen.has(key)) continue; seen.add(key); out.push([score, p]); }
+  return out.sort((x, y) => x[0] - y[0] || (x[1].kind === "日本" ? -1 : 0)).slice(0, 8).map(x => x[1]);
+}
+let suggIdx = -1, suggList = [];
+function showSugg() {
+  const box = $("sugg"); suggList = findPlaces($("q").value); suggIdx = -1;
+  if (!suggList.length) { box.hidden = !$("q").value; box.innerHTML = $("q").value ? `<button type="button" disabled>見つかりません。📍 で地図から選べます</button>` : ""; return; }
+  box.innerHTML = suggList.map((p, i) => `<button type="button" data-i="${i}">${esc(p.ja)}<small>${esc(p.kind)}・${p.lat.toFixed(1)}°, ${p.lon.toFixed(1)}°</small></button>`).join("");
+  box.hidden = false;
+}
+$("q").addEventListener("input", showSugg);
+$("q").addEventListener("keydown", e => {
+  const bs = [...$("sugg").querySelectorAll("button[data-i]")]; if (!bs.length) return;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); suggIdx = (suggIdx + (e.key === "ArrowDown" ? 1 : -1) + bs.length) % bs.length; bs.forEach((b, i) => b.classList.toggle("on", i === suggIdx)); }
+  if (e.key === "Enter") { e.preventDefault(); const p = suggList[Math.max(suggIdx, 0)]; if (p) choose(p.ja, p.lat, p.lon); }
+});
+$("sugg").addEventListener("click", e => { const b = e.target.closest("button[data-i]"); if (!b) return; const p = suggList[+b.dataset.i]; choose(p.ja, p.lat, p.lon); });
+document.addEventListener("click", e => { if (!e.target.closest(".search")) $("sugg").hidden = true; });
+
+/* ===== 地点を選ぶ（照準の地図） ===== */
+const view = { lon: 135, lat: 35, ppd: 6 };   /* ppd：1度あたりのピクセル */
+function drawMap() {
+  const cv = $("map"), r = cv.getBoundingClientRect(), dpr = Math.min(devicePixelRatio || 1, 2);
+  cv.width = r.width * dpr; cv.height = r.height * dpr; const x = cv.getContext("2d"); x.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const W = r.width, H = r.height, cx = W / 2, cy = H / 2, k = view.ppd;
+  x.fillStyle = "#081226"; x.fillRect(0, 0, W, H);
+  x.strokeStyle = "rgba(150,172,226,.12)"; x.lineWidth = 1;
+  for (let g = -180; g <= 180; g += 15) { for (const s of [-360, 0, 360]) { const px = cx + (g + s - view.lon) * k; if (px > -2 && px < W + 2) { x.beginPath(); x.moveTo(px, 0); x.lineTo(px, H); x.stroke(); } } }
+  for (let g = -75; g <= 75; g += 15) { const py = cy - (g - view.lat) * k; x.beginPath(); x.moveTo(0, py); x.lineTo(W, py); x.stroke(); }
+  if (D.coast) { x.strokeStyle = "rgba(220,230,250,.75)"; x.lineWidth = 1;
+    for (const s of [-360, 0, 360]) { x.beginPath(); let pen = false, plon = 0;
+      for (let i = 0; i < D.coast.length; i += 2) { if (D.coast[i] === 32767) { pen = false; continue; } const lo = D.coast[i] / 100, la = D.coast[i + 1] / 100;
+        const px = cx + (lo + s - view.lon) * k, py = cy - (la - view.lat) * k;
+        if (pen && Math.abs(lo - plon) < 180) x.lineTo(px, py); else x.moveTo(px, py); pen = true; plon = lo; }
+      x.stroke(); } }
+  if (cur) { for (const s of [-360, 0, 360]) { const px = cx + (cur.lon + s - view.lon) * k, py = cy - (cur.lat - view.lat) * k; x.fillStyle = "#e9b35a"; x.beginPath(); x.arc(px, py, 4, 0, 7); x.fill(); } }
+  $("mapcoord").textContent = `${Math.abs(view.lat).toFixed(1)}°${view.lat >= 0 ? "N" : "S"}  ${Math.abs(view.lon).toFixed(1)}°${view.lon >= 0 ? "E" : "W"}`;
+}
+(() => { const w = $("mapwrap"); let drag = null;
+  w.addEventListener("pointerdown", e => { drag = { x: e.clientX, y: e.clientY, lon: view.lon, lat: view.lat }; w.setPointerCapture(e.pointerId); w.style.cursor = "grabbing"; });
+  w.addEventListener("pointermove", e => { if (!drag) return; view.lon = ((drag.lon - (e.clientX - drag.x) / view.ppd) + 540) % 360 - 180; view.lat = Math.max(-85, Math.min(85, drag.lat + (e.clientY - drag.y) / view.ppd)); drawMap(); });
+  const end = () => { drag = null; w.style.cursor = "grab"; }; w.addEventListener("pointerup", end); w.addEventListener("pointercancel", end);
+  w.addEventListener("wheel", e => { e.preventDefault(); view.ppd = Math.max(1.5, Math.min(60, view.ppd * (e.deltaY < 0 ? 1.15 : 1 / 1.15))); drawMap(); }, { passive: false });
+  $("zin").onclick = () => { view.ppd = Math.min(60, view.ppd * 1.5); drawMap(); };
+  $("zout").onclick = () => { view.ppd = Math.max(1.5, view.ppd / 1.5); drawMap(); };
+})();
+function setPicking(on) { $("pick").setAttribute("aria-pressed", String(on)); $("mapbox").hidden = !on; if (on) { if (cur) { view.lon = cur.lon; view.lat = cur.lat; } requestAnimationFrame(drawMap); } }
+$("pick").onclick = () => setPicking($("pick").getAttribute("aria-pressed") !== "true");
+$("cancel").onclick = () => setPicking(false);
+$("go").onclick = () => { const near = nearestName(view.lat, view.lon); choose(near, view.lat, view.lon); setPicking(false); };
+addEventListener("resize", () => { if (!$("mapbox").hidden) drawMap(); });
+function distKm(a1, o1, a2, o2) { const h = S((a2 - a1) / 2) ** 2 + C(a1) * C(a2) * S((o2 - o1) / 2) ** 2; return 12742 * Math.asin(Math.min(1, Math.sqrt(h))); }
+function nearestName(lat, lon) { let best = null, bd = 1e9; for (const p of D.places) { if (p.kind === "国") continue; const d = distKm(lat, lon, p.lat, p.lon); if (d < bd) { bd = d; best = p; } }
+  return best && bd < 60 ? `${best.ja}のあたり` : best && bd < 400 ? `${best.ja}から約${Math.round(bd / 10) * 10}km` : "選んだ地点"; }
+
+/* ===== タイル ===== */
+const tag = (kind, t) => `<div class="tag">${kind}${t ? "・" + JSTD.format(t) : ""}</div>`;
+function compass(fromDeg, spd) {
+  const r = 46, a = fromDeg * D2R, tipx = 60 - Math.sin(a) * r * 0.82, tipy = 60 + Math.cos(a) * r * 0.82, tailx = 60 + Math.sin(a) * r * 0.82, taily = 60 - Math.cos(a) * r * 0.82;
+  let ticks = ""; for (let i = 0; i < 72; i++) { const b = i * 5 * D2R, l = i % 18 === 0 ? 8 : i % 2 ? 3 : 5; ticks += `<line x1="${60 + Math.sin(b) * r}" y1="${60 - Math.cos(b) * r}" x2="${60 + Math.sin(b) * (r - l)}" y2="${60 - Math.cos(b) * (r - l)}" stroke="rgba(228,233,244,${i % 18 === 0 ? .7 : .25})" stroke-width="1"/>`; }
+  return `<svg width="120" height="120" viewBox="0 0 120 120" aria-hidden="true">${ticks}
+    <text x="60" y="11" fill="#9ca7bf" font-size="9" text-anchor="middle">北</text><text x="60" y="117" fill="#9ca7bf" font-size="9" text-anchor="middle">南</text>
+    <text x="114" y="63" fill="#9ca7bf" font-size="9" text-anchor="middle">東</text><text x="6" y="63" fill="#9ca7bf" font-size="9" text-anchor="middle">西</text>
+    ${spd < 0.3 ? "" : `<line x1="${tailx}" y1="${taily}" x2="${tipx}" y2="${tipy}" stroke="#e4e9f4" stroke-width="2"/><circle cx="${tailx}" cy="${taily}" r="3.5" fill="#e4e9f4"/>
+    <path d="M${tipx} ${tipy} l${-Math.sin(a + 0.45) * -7} ${Math.cos(a + 0.45) * -7} M${tipx} ${tipy} l${-Math.sin(a - 0.45) * -7} ${Math.cos(a - 0.45) * -7}" stroke="#e4e9f4" stroke-width="2"/>`}
+    <circle cx="60" cy="60" r="20" fill="rgba(8,12,24,.85)"/><text x="60" y="62" fill="#e4e9f4" font-size="15" font-weight="700" text-anchor="middle">${spd.toFixed(1)}</text><text x="60" y="73" fill="#9ca7bf" font-size="8" text-anchor="middle">m/s</text></svg>`;
+}
+function gauge(hpa, trend) {
+  const lo = 960, hi = 1050, f = Math.max(0, Math.min(1, (hpa - lo) / (hi - lo))), a0 = -130, a1 = 130, a = (a0 + (a1 - a0) * f) * D2R;
+  let ticks = ""; for (let i = 0; i <= 45; i++) { const b = (a0 + (a1 - a0) * i / 45) * D2R, l = i % 5 === 0 ? 7 : 3.5; ticks += `<line x1="${60 + Math.sin(b) * 48}" y1="${62 - Math.cos(b) * 48}" x2="${60 + Math.sin(b) * (48 - l)}" y2="${62 - Math.cos(b) * (48 - l)}" stroke="rgba(228,233,244,${i % 5 ? .25 : .55})"/>`; }
+  const arrow = trend == null ? "" : trend < -1 ? "↓" : trend > 1 ? "↑" : "→";
+  return `<svg width="120" height="120" viewBox="0 0 120 120" aria-hidden="true">${ticks}
+    <line x1="${60 + Math.sin(a) * 30}" y1="${62 - Math.cos(a) * 30}" x2="${60 + Math.sin(a) * 50}" y2="${62 - Math.cos(a) * 50}" stroke="#8fe3d4" stroke-width="3" stroke-linecap="round"/>
+    <text x="60" y="58" fill="#e4e9f4" font-size="18" text-anchor="middle">${arrow}</text>
+    <text x="34" y="112" fill="#9ca7bf" font-size="9" text-anchor="middle">低</text><text x="86" y="112" fill="#9ca7bf" font-size="9" text-anchor="middle">高</text></svg>`;
+}
+function spark(series) {
+  if (series.length < 2) return "";
+  const vs = series.map(s => s.v), mn = Math.min(...vs) - 0.5, mx = Math.max(...vs) + 0.5, t0 = +series[0].t, t1 = +series[series.length - 1].t || t0 + 1;
+  const pts = series.map(s => `${(8 + (+s.t - t0) / (t1 - t0 || 1) * 184).toFixed(1)},${(36 - (s.v - mn) / (mx - mn) * 30).toFixed(1)}`).join(" ");
+  return `<svg width="100%" height="42" viewBox="0 0 200 42" preserveAspectRatio="none" aria-hidden="true"><polyline points="${pts}" fill="none" stroke="#8fe3d4" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>`;
+}
+function moonDisk(age) {
+  const k = (1 - Math.cos(2 * Math.PI * age / 29.530589)) / 2, waxing = age < 14.765, r = 40, cx = 50, cy = 50;
+  const tx = r * Math.abs(1 - 2 * k), lit = "#e8ecf6", dark = "rgba(150,165,200,.16)";
+  const big = waxing ? `M${cx} ${cy - r} A${r} ${r} 0 0 1 ${cx} ${cy + r}` : `M${cx} ${cy - r} A${r} ${r} 0 0 0 ${cx} ${cy + r}`;
+  const term = `A${tx} ${r} 0 0 ${(k > 0.5) === waxing ? 1 : 0} ${cx} ${cy - r}`;
+  return `<svg width="100" height="100" viewBox="0 0 100 100" aria-hidden="true"><circle cx="${cx}" cy="${cy}" r="${r}" fill="${dark}"/><path d="${big} ${term.replace(/^A/, "A")}" fill="${lit}" opacity=".92"/></svg>`;
+}
+const tile = (cls, head, body) => `<section class="tile ${cls}"><div class="th">${head}</div>${body}</section>`;
+
+let cur = null;
+async function choose(name, lat, lon) {
+  cur = { name, lat: +lat, lon: ((+lon + 540) % 360) - 180 };
+  $("q").value = name.replace(/のあたり$|から約.*$/, ""); $("sugg").hidden = true;
+  store.set("dash.place", JSON.stringify(cur));
+  render();
+}
+
+async function render() {
+  const { name, lat, lon } = cur, grid = $("grid"), now = Date.now();
+  const valid = new Date(D.man.layers["wind-10m"].meta.validTime);
+  const out = [];
+  /* 場所 */
+  out.push(tile("wide place", "📍 場所", `<div class="big">${esc(name)}</div>
+    <div class="say">${Math.abs(lat).toFixed(2)}°${lat >= 0 ? "N" : "S"}, ${Math.abs(lon).toFixed(2)}°${lon >= 0 ? "E" : "W"}。天気の数字は、このあたり約100km四方の平均です（その場所ぴったりの観測ではありません）。</div>`));
+  /* 風 */
+  const [u, v] = windAt(lon, lat), spd = Math.hypot(u, v), from = (Math.atan2(-u, -v) / D2R + 360) % 360;
+  const wsay = spd < 0.3 ? "ほとんど風がない" : spd < 3.4 ? "そよ風くらい（木の葉がゆれる程度）" : spd < 8 ? "やや強め（小枝がゆれる程度）" : spd < 13.9 ? "強い（大きな枝がゆれる程度）" : spd < 20.8 ? "とても強い（歩きにくいくらい）" : "非常に強い";
+  out.push(tile("", "🌬 風（地上10m）", `<div class="split"><div><div class="big">${spd.toFixed(1)}<small>m/s</small></div><div class="mid">${spd < 0.3 ? "—" : DIRS[Math.round(from / 22.5) % 16] + "の風"}</div></div>${compass(from, spd)}</div>
+    <div class="say">${wsay}。矢印は風が吹いていく向き、丸い印は吹いてくる側。</div>${tag("計算（GFS）", valid)}`));
+  /* 気圧 */
+  const pf = scalarSampler("pressure", D.buf.pressure), hpa = pf ? pf(lon, lat) : null;
+  if (hpa != null) {
+    const ar = await later.archive(); const series = ar.series.map(s => ({ t: s.t, v: s.f(lon, lat) })).filter(s => s.v != null);
+    if (!series.length || +series[series.length - 1].t !== +valid) series.push({ t: valid, v: hpa });
+    series.sort((a, b) => a.t - b.t);
+    let trend = null, tsay = `記録がたまると、上がっているか下がっているかの矢印が出ます（いま ${ar.count} 回分）。`;
+    const last = series[series.length - 1], back = series.filter(s => last.t - s.t >= 5 * 3600000).pop();
+    if (back) { const hrs = (last.t - back.t) / 3600000; trend = (last.v - back.v) * 6 / hrs;
+      tsay = `${Math.round(hrs)}時間で ${(last.v - back.v >= 0 ? "+" : "") + (last.v - back.v).toFixed(1)} hPa（${trend < -1 ? "下がってきている" : trend > 1 ? "上がってきている" : "ほぼ変わらない"}）。`; }
+    out.push(tile("", "🧭 気圧（海面）", `<div class="split"><div><div class="big">${Math.round(hpa).toLocaleString()}<small>hPa</small></div>
+      <div class="mid">${hpa < 1000 ? "低め" : hpa > 1020 ? "高め" : "ふつうくらい"}</div></div>${gauge(hpa, trend)}</div>${spark(series)}
+      <div class="say">${tsay} 平均はだいたい 1013 hPa。</div>${tag("計算（GFS）・過去の記録から", valid)}`));
+  }
+  /* 雨 */
+  const rf = scalarSampler("rain", D.buf.rain), mmh = rf ? rf(lon, lat) : null;
+  if (mmh != null) {
+    const rsay = mmh < 0.1 ? "降っていない" : mmh < 3 ? "弱い雨" : mmh < 10 ? "ふつうの雨" : mmh < 20 ? "やや強い雨" : mmh < 30 ? "強い雨" : "激しい雨";
+    const rm = D.man.layers.rain.meta;
+    out.push(tile("", "🌧 雨", `<div class="big">${mmh < 0.1 ? "0" : mmh.toFixed(1)}<small>mm/時</small></div><div class="mid">${rsay}</div>
+      <div class="say">その時間帯の雨の強さの平均（${JST.format(new Date(rm.validFrom))}〜${JST.format(new Date(rm.validTo))}）。言葉は気象庁の雨の強さの呼び方に合わせています。</div>${tag("計算（GFS）")}`));
+  }
+  /* 太陽 */
+  const day0 = jstDayStart(now), sp = sunPos(now), sAlt = alt(sp, now, lat, lon), srs = riseSet(sunPos, -0.833, lat, lon, day0);
+  out.push(tile("", "☀️ 太陽", `<div class="big">${sAlt.toFixed(0)}<small>°</small></div><div class="mid">${sAlt > 0 ? "空の上" : sAlt > -6 ? "地平線のすぐ下（薄明るい）" : "沈んでいる"}</div>
+    <div class="row"><span>日の出</span><span>${srs.allUp ? "沈まない" : srs.allDown ? "昇らない" : srs.rise ? JST.format(srs.rise) : "—"}</span></div>
+    <div class="row"><span>日の入</span><span>${srs.allUp ? "沈まない" : srs.allDown ? "昇らない" : srs.set ? JST.format(srs.set) : "—"}</span></div>
+    <div class="say">数字は今の太陽の高さ（地平線から何度）。</div>${tag("計算・日本時間で今日", null)}`));
+  /* 月 */
+  const mp = moonPos(now), lit = (1 - Math.cos(2 * Math.PI * mp.age / 29.530589)) / 2, mrs = riseSet(moonPos, 0.125, lat, lon, day0);
+  let tFull = now; for (let h = 1; h < 24 * 31; h++) { const a = moonPos(now + h * 3600000).age, p = moonPos(now + (h - 1) * 3600000).age; if (p < 14.765 && a >= 14.765) { tFull = now + h * 3600000; break; } }
+  const phase = mp.age < 1.5 || mp.age > 28 ? "新月のころ" : Math.abs(mp.age - 14.77) < 1.5 ? "満月のころ" : Math.abs(mp.age - 7.4) < 1.5 ? "上弦のころ" : Math.abs(mp.age - 22.1) < 1.5 ? "下弦のころ" : mp.age < 14.77 ? "満ちていく月" : "欠けていく月";
+  out.push(tile("", "🌙 月", `<div class="split"><div><div class="mid" style="font-size:20px">${phase}</div>
+    <div class="row"><span>月齢</span><span>${mp.age.toFixed(1)}</span></div><div class="row"><span>光っている割合</span><span>${Math.round(lit * 100)}%</span></div>
+    <div class="row"><span>月の出</span><span>${mrs.rise ? JST.format(mrs.rise) : mrs.allUp ? "沈まない" : "今日はなし"}</span></div><div class="row"><span>月の入</span><span>${mrs.set ? JST.format(mrs.set) : mrs.allUp ? "沈まない" : "今日はなし"}</span></div>
+    <div class="row"><span>次の満月</span><span>${Math.max(0, Math.round((tFull - now) / 86400000))}日後</span></div></div>${moonDisk(mp.age)}</div>${tag("計算・日本時間で今日", null)}`));
+  /* 海 */
+  const sa = await later.seaage(); let ageMa = null; if (sa) { const g = sa.g, j = Math.min(g.ny - 1, Math.max(0, Math.floor(g.lat0 + 0.5 - lat))), i = ((Math.floor(lon - g.lon0 + 0.5) % g.nx) + g.nx) % g.nx, a = sa.a[j * g.nx + i]; ageMa = a === g.none ? null : a; }
+  const sst = D.buf["sst-anom"] ? scalarSampler("sst-anom", D.buf["sst-anom"])(lon, lat) : null;
+  if (ageMa != null || sst != null) {
+    out.push(tile("", "🌊 海", `${sst != null ? `<div class="big">${sst >= 0 ? "+" : ""}${sst.toFixed(1)}<small>℃</small></div><div class="mid">海面水温の平年との差（${sst > 0.5 ? "いつもより暖かい" : sst < -0.5 ? "いつもより冷たい" : "いつもくらい"}）</div>` : ""}
+      ${ageMa != null ? `<div class="row"><span>海の底の岩の年齢</span><span>約${ageMa}百万年</span></div>` : ""}
+      <div class="say">${ageMa != null ? (ageMa < 20 ? "海底は若い（生まれる所＝海嶺が近い）。" : ageMa > 100 ? "海底は古い（冷えて重くなった板）。" : "海底は中くらいの年齢。") : ""}</div>${tag(sst != null ? "観測から（NOAA OISST）・EarthByte" : "研究モデル（EarthByte）")}`));
+  }
+  /* 地面の下 */
+  const [pl, qs] = await Promise.all([later.plate(), later.quakes()]);
+  let plateHtml = "", qHtml = "";
+  if (pl) { const g = pl.m.grid, j = Math.min(g.ny - 1, Math.max(0, Math.floor(g.lat0 + 0.5 - lat))), i = ((Math.floor(lon - g.lon0 + 0.5) % g.nx) + g.nx) % g.nx, p = pl.g[j * g.nx + i];
+    if (p !== g.none && pl.m.plates[p]?.w) { const P = pl.m.plates[p], w = P.w, la = lat * D2R, lo = lon * D2R, r = [Math.cos(la) * Math.cos(lo), Math.sin(la), -Math.cos(la) * Math.sin(lo)];
+      const vx = (w[1] * r[2] - w[2] * r[1]) * 6371, vy = (w[2] * r[0] - w[0] * r[2]) * 6371, vz = (w[0] * r[1] - w[1] * r[0]) * 6371;
+      const e = [-Math.sin(lo), 0, -Math.cos(lo)], n = [-Math.sin(la) * Math.cos(lo), Math.cos(la), Math.sin(la) * Math.sin(lo)];
+      const ve = vx * e[0] + vy * e[1] + vz * e[2], vn = vx * n[0] + vy * n[1] + vz * n[2], cm = Math.hypot(ve, vn) / 10, dir = (Math.atan2(ve, vn) / D2R + 360) % 360;
+      plateHtml = `<div class="big">${cm.toFixed(1)}<small>cm/年</small></div><div class="mid">${PLATE_JA[P.code] ? PLATE_JA[P.code] + "プレート" : P.code}・${DIRS[Math.round(dir / 22.5) % 16]}へ</div>`; } }
+  if (qs && qs.length) { let n = 0, maxM = 0, maxD = 0; for (let k = 0; k < qs.length; k += 4) { const qa = qs[k] / 100, qo = qs[k + 1] / 100; if (Math.abs(qa - lat) > 3) continue; if (distKm(lat, lon, qa, qo) <= 300) { n++; maxM = Math.max(maxM, qs[k + 3] / 10); maxD = Math.max(maxD, qs[k + 2]); } }
+    qHtml = `<div class="row"><span>300km以内の M5以上（1990〜2025年）</span><span>${n.toLocaleString()} 回</span></div>${n ? `<div class="row"><span>いちばん大きい</span><span>M${maxM.toFixed(1)}</span></div><div class="row"><span>いちばん深い</span><span>${maxD} km</span></div>` : ""}`; }
+  if (plateHtml || qHtml) out.push(tile("", "🪨 地面の下", `${plateHtml}${qHtml}<div class="say">プレートの速さは研究モデルの平均。地震は過去の記録で、これから起きる場所を示すものではありません。</div>${tag("研究モデル（PB2002）・記録（USGS）")}`));
+  /* 鮮度 */
+  const ageH = (now - valid) / 3600000, ar2 = await later.archive();
+  out.push(tile("", "🕒 データの時刻", `<div class="big">${ageH.toFixed(1)}<small>時間前</small></div><div class="mid">${JSTD.format(valid)} の姿</div>
+    <div class="row"><span>記録庫</span><span>${ar2.count} 回分</span></div>${ar2.oldest ? `<div class="row"><span>いちばん古い記録</span><span>${JSTD.format(new Date(ar2.oldest))}</span></div>` : ""}
+    <div class="say">新しいデータは6時間ごと。ふだんは 1時間半〜7時間半前の間を行ったり来たりします。</div>`));
+  /* この先 */
+  out.push(tile("link", "📅 この先の天気", `<div class="mid">このページでは扱いません</div>
+    <a href="https://www.jma.go.jp/bosai/forecast/" target="_blank" rel="noopener">気象庁の天気予報 →</a>
+    <a href="https://www.jma.go.jp/bosai/map.html#contents=typhoon" target="_blank" rel="noopener">気象庁の台風情報 →</a>
+    <div class="say">予報は、許可を受けた気象庁などの情報を見てください。</div>`));
+  grid.innerHTML = out.join(""); grid.hidden = false;
+}
+
+(async () => {
+  try { await loadMain(); await loadExtras(); }
+  catch (e) { $("loading").textContent = "データを読み込めませんでした（" + e.message + "）"; return; }
+  $("loading").remove();
+  let saved = null; try { saved = JSON.parse(store.get("dash.place") || "null"); } catch (_) {}
+  const qp = new URLSearchParams(location.search);
+  if (qp.has("lat") && qp.has("lon")) choose(qp.get("name") || nearestName(+qp.get("lat"), +qp.get("lon")), +qp.get("lat"), +qp.get("lon"));
+  else if (saved && Number.isFinite(saved.lat)) choose(saved.name, saved.lat, saved.lon);
+  else choose("京都市", 35.01, 135.77);
+})();
+</script>
+</body>
+</html>
