@@ -217,6 +217,23 @@ jobs:
           path: shake_cache
           key: shake-${{ github.run_id }}
 
+      # ためて再生（もらった水の記録庫）：風・雨・気圧を捨てずに直近31日分とっておき、公開ページの data/archive/ にも置く。水源へは行かない
+      - uses: actions/cache/restore@v6
+        if: steps.reuse.outputs.deploy == 'true'
+        with:
+          path: archive_store
+          key: archive-${{ github.run_id }}
+          restore-keys: archive-
+      - name: 記録庫に今回の回を足す（古い回は消す）
+        if: steps.reuse.outputs.deploy == 'true'
+        continue-on-error: true
+        run: python scripts/archive_sets.py --latest _site/data/latest --store archive_store --out _site/data/archive
+      - uses: actions/cache/save@v6
+        if: steps.reuse.outputs.deploy == 'true' && hashFiles('archive_store/index.json') != ''
+        with:
+          path: archive_store
+          key: archive-${{ github.run_id }}
+
       # 一式を置き場に残す（次にコードを送ったとき、これを使う）。push で火山などを足した分も含めて残す。一式が作れなかったときは残さない
       - name: 取った一式を置き場へ
         if: steps.reuse.outputs.deploy == 'true' && hashFiles('_site/data/latest/manifest.json') != ''
