@@ -13,6 +13,7 @@
 """
 import argparse
 import csv
+import datetime as dt
 import io
 import json
 import os
@@ -43,7 +44,8 @@ def parse(text):
         try:
             if r.get("type", "earthquake") != "earthquake":
                 continue
-            rows.append((float(r["latitude"]), float(r["longitude"]), float(r["depth"] or 0), float(r["mag"])))
+            t = dt.datetime.fromisoformat(r["time"].replace("Z", "+00:00"))
+            rows.append((float(r["latitude"]), float(r["longitude"]), float(r["depth"] or 0), float(r["mag"]), t.timestamp()))
         except (KeyError, ValueError):
             continue
     return rows
@@ -88,14 +90,22 @@ def main():
     if not rows:
         note("過去の地震：使える記録がありません（今回は断面の地震なし）", "warning")
         return
-    a = np.array(rows, dtype="float64")
+    a = np.array(rows, dtype="float64")                     # 緯度・経度・深さ・規模・時刻（秒）
     q = np.stack([np.round(a[:, 0] * 100), np.round(a[:, 1] * 100), np.clip(np.round(a[:, 2]), 0, 800), np.round(a[:, 3] * 10)], axis=1).astype("<i2")
-    q = q[np.argsort(a[:, 2])]                              # 浅い順（深い地震を後に描いて見えやすく）
+    order = np.argsort(a[:, 2], kind="stable")
+    q = q[order]                                            # 浅い順（深い地震を後に描いて見えやすく）
     with open(os.path.join(args.latest, "quakehist.bin"), "wb") as f:
         f.write(q.tobytes())
+    # 起きた日時（同じ並び）：1990年1月1日からの日数と、その日の何分目か（世界時）。地点ダッシュボードで「いつ」を出すため
+    base = dt.datetime(1990, 1, 1, tzinfo=dt.timezone.utc).timestamp()
+    sec = a[order, 4] - base
+    tq = np.stack([np.floor(sec / 86400), np.floor((sec % 86400) / 60)], axis=1).astype("<u2")
+    with open(os.path.join(args.latest, "quakehist_t.bin"), "wb") as f:
+        f.write(tq.tobytes())
     manifest = json.load(open(mpath, encoding="utf-8"))
     manifest["layers"]["quake-history"] = {
         "type": "points", "file": "quakehist.bin", "format": "int16-lat100-lon100-depthkm-mag10", "lazy": True,
+        "timeFile": "quakehist_t.bin", "timeFormat": "uint16-days-since-1990-01-01-utc, uint16-minute-of-day-utc",
         "meta": {
             "title": "過去の地震の深さ（M5.0 以上）", "kind": "観測の記録",
             "model": f"USGS の地震カタログ（{SPANS[0][0][:4]}〜{int(SPANS[-1][1][:4]) - 1}年、M5.0 以上）",

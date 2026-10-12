@@ -64,6 +64,7 @@
   .row{display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid var(--tile-edge);padding:7px 0;font-size:14px}
   .row:last-child{border-bottom:0}
   .row span:last-child{font-variant-numeric:tabular-nums;color:var(--ink-soft)}
+  .row small{font-size:11.5px;color:var(--ink-faint)}
   .split{display:flex;gap:12px;align-items:center}
   .split > :first-child{flex:1;min-width:0}
   .none{color:var(--ink-faint);font-size:14px;margin-top:10px}
@@ -116,6 +117,7 @@ const D2R = Math.PI / 180;
 const DIRS = ["北","北北東","北東","東北東","東","東南東","南東","南南東","南","南南西","南西","西南西","西","西北西","北西","北北西"];
 const PLATE_JA = { PA:"太平洋",NA:"北アメリカ",EU:"ユーラシア",AF:"アフリカ",AN:"南極",IN:"インド",AU:"オーストラリア",SA:"南アメリカ",NZ:"ナスカ",CO:"ココス",PS:"フィリピン海",AR:"アラビア",OK:"オホーツク",AM:"アムール",CA:"カリブ",JF:"ファンデフカ",SO:"ソマリア",SU:"スンダ",YA:"揚子",SC:"スコシア",RI:"リベラ",MA:"マリアナ",ON:"沖縄",TO:"トンガ",KE:"ケルマデック",NH:"ニューヘブリディーズ",BS:"バンダ海",AS:"エーゲ海",AT:"アナトリア",PM:"パナマ",NB:"北ビスマルク",SB:"南ビスマルク",SS:"ソロモン海",TI:"ティモール",BH:"バーズヘッド",CL:"キャロライン",BU:"ビルマ",MS:"モルッカ海",ND:"北アンデス",AP:"アルティプラノ",EA:"イースター",JZ:"ファンフェルナンデス",GP:"ガラパゴス",MN:"マヌス",WL:"ウッドラーク",FT:"フツナ",NI:"ニウアフォウ",BR:"バルモラル礁",CR:"コンウェイ礁",MO:"モーンズ礁",SW:"サンドウィッチ",SL:"シェトランド" };
 const JST = new Intl.DateTimeFormat("ja-JP", { timeZone: "Asia/Tokyo", hour: "2-digit", minute: "2-digit" });
+const QDATE = new Intl.DateTimeFormat("ja-JP", { timeZone: "Asia/Tokyo", year: "numeric", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 const JSTD = new Intl.DateTimeFormat("ja-JP", { timeZone: "Asia/Tokyo", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -170,7 +172,10 @@ const later = {
         const keep = D.man.layers.pressure; D.man.layers.__tmp = L; const f = scalarSampler("__tmp", buf); delete D.man.layers.__tmp; out.push({ t: new Date(m.validTime), f }); } catch (_) {} }
       D.archive = { count: idx.sets.length, oldest: idx.sets[0]?.validTime, series: out }; } catch (_) { D.archive = { count: 0, series: [] }; }
     return D.archive; },
-  async quakes() { if (D.quakes) return D.quakes; try { D.quakes = new Int16Array(await getBin(D.base + D.man.layers["quake-history"].file)); } catch (_) { D.quakes = new Int16Array(0); } return D.quakes; },
+  async quakes() { if (D.quakes) return D.quakes; const L = D.man.layers["quake-history"];
+    try { D.quakes = new Int16Array(await getBin(D.base + L.file)); } catch (_) { D.quakes = new Int16Array(0); }
+    try { if (L.timeFile) D.qtime = new Uint16Array(await getBin(D.base + L.timeFile)); } catch (_) { D.qtime = null; }   /* 起きた日時（なくても動く） */
+    return D.quakes; },
   async plate() { if (D.plate) return D.plate; try { const [m, b] = await Promise.all([getJSON("data/map/platemotion.json"), getBin("data/map/platemotion.bin")]); D.plate = { m, g: new Uint8Array(b) }; } catch (_) { D.plate = null; } return D.plate; },
   async seaage() { if (D.seaage) return D.seaage; try { const L = D.man.layers["seafloor-age"]; D.seaage = { g: L.grid, a: new Uint8Array(await getBin(D.base + L.file)) }; } catch (_) { D.seaage = null; } return D.seaage; },
 };
@@ -389,8 +394,13 @@ async function render() {
       const e = [-Math.sin(lo), 0, -Math.cos(lo)], n = [-Math.sin(la) * Math.cos(lo), Math.cos(la), Math.sin(la) * Math.sin(lo)];
       const ve = vx * e[0] + vy * e[1] + vz * e[2], vn = vx * n[0] + vy * n[1] + vz * n[2], cm = Math.hypot(ve, vn) / 10, dir = (Math.atan2(ve, vn) / D2R + 360) % 360;
       plateHtml = `<div class="big">${cm.toFixed(1)}<small>cm/年</small></div><div class="mid">${PLATE_JA[P.code] ? PLATE_JA[P.code] + "プレート" : P.code}・${DIRS[Math.round(dir / 22.5) % 16]}へ</div>`; } }
-  if (qs && qs.length) { let n = 0, maxM = 0, maxD = 0; for (let k = 0; k < qs.length; k += 4) { const qa = qs[k] / 100, qo = qs[k + 1] / 100; if (Math.abs(qa - lat) > 3) continue; if (distKm(lat, lon, qa, qo) <= 300) { n++; maxM = Math.max(maxM, qs[k + 3] / 10); maxD = Math.max(maxD, qs[k + 2]); } }
-    qHtml = `<div class="row"><span>300km以内の M5以上（1990〜2025年）</span><span>${n.toLocaleString()} 回</span></div>${n ? `<div class="row"><span>いちばん大きい</span><span>M${maxM.toFixed(1)}</span></div><div class="row"><span>いちばん深い</span><span>${maxD} km</span></div>` : ""}`; }
+  if (qs && qs.length) { let n = 0, iM = -1, iD = -1, iL = -1;
+    const when = i => D.qtime ? Date.UTC(1990, 0, 1) + D.qtime[2 * i] * 86400000 + D.qtime[2 * i + 1] * 60000 : null;
+    for (let k = 0, i = 0; k < qs.length; k += 4, i++) { const qa = qs[k] / 100, qo = qs[k + 1] / 100; if (Math.abs(qa - lat) > 3) continue; if (distKm(lat, lon, qa, qo) > 300) continue;
+      n++; if (iM < 0 || qs[k + 3] > qs[4 * iM + 3]) iM = i; if (iD < 0 || qs[k + 2] > qs[4 * iD + 2]) iD = i; if (D.qtime && (iL < 0 || when(i) > when(iL))) iL = i; }
+    const at = i => { const t = when(i); return t == null ? "" : `<br><small>${QDATE.format(new Date(t))}・${Math.round(distKm(lat, lon, qs[4 * i] / 100, qs[4 * i + 1] / 100))}km先</small>`; };
+    const row = (label, val, i) => `<div class="row"><span>${label}</span><span style="text-align:right">${val}${at(i)}</span></div>`;
+    qHtml = `<div class="row"><span>300km以内の M5以上（1990〜2025年）</span><span>${n.toLocaleString()} 回</span></div>${n ? row("いちばん大きい", "M" + (qs[4 * iM + 3] / 10).toFixed(1), iM) + row("いちばん深い", qs[4 * iD + 2] + " km", iD) + (iL >= 0 ? row("いちばん新しい", "M" + (qs[4 * iL + 3] / 10).toFixed(1), iL) : "") : ""}`; }
   if (plateHtml || qHtml) out.push(tile("", "🪨 地面の下", `${plateHtml}${qHtml}<div class="say">プレートの速さは研究モデルの平均。地震は過去の記録で、これから起きる場所を示すものではありません。</div>${tag("研究モデル（PB2002）・記録（USGS）")}`));
   /* 鮮度 */
   const ageH = (now - valid) / 3600000, ar2 = await later.archive();
