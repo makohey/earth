@@ -20,7 +20,7 @@ import shutil
 import urllib.request
 
 KEEP_DAYS = 31
-LAYERS = ["wind-10m", "rain", "pressure"]          # ためるもの：流れが見えるもの（1回 約0.8MB）
+LAYERS = ["wind-10m", "rain", "pressure", "wave"]  # ためるもの：流れが見えるもの＋波（1回 約1.3MB）
 OWN = "https://makohey.github.io/earth/data/archive/"
 UA = "globe-prototype/archive (+https://github.com/makohey/earth; restoring its own archive)"
 
@@ -119,7 +119,7 @@ def main():
         sets.append({"id": sid, "issuedTime": m["issuedTime"], "validTime": m["validTime"],
                      "layers": sorted(m["layers"]), "files": files, "bytes": size})
     index = {"keepDays": KEEP_DAYS, "updatedAt": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-             "note": "地球儀がもらった GFS の風・雨・気圧を捨てずに取っておいたもの（モデル計算・過去の記録）",
+             "note": "地球儀がもらった GFS の風・雨・気圧・波を捨てずに取っておいたもの（モデル計算・過去の記録）",
              "sets": sets}
     json.dump(index, open(os.path.join(args.store, "index.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
 

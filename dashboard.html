@@ -188,6 +188,7 @@ const later = {
     try { if (L.timeFile) D.qtime = new Uint16Array(await getBin(D.base + L.timeFile)); } catch (_) { D.qtime = null; }   /* 起きた日時（なくても動く） */
     return D.quakes; },
   async plate() { if (D.plate) return D.plate; try { const [m, b] = await Promise.all([getJSON("data/map/platemotion.json"), getBin("data/map/platemotion.bin")]); D.plate = { m, g: new Uint8Array(b) }; } catch (_) { D.plate = null; } return D.plate; },
+  async wave() { if (D.wave !== undefined) return D.wave; try { const L = D.man.layers.wave; D.wave = L ? { L, a: new Uint8Array(await getBin(D.base + L.file)) } : null; } catch (_) { D.wave = null; } return D.wave; },
   async seaage() { if (D.seaage) return D.seaage; try { const L = D.man.layers["seafloor-age"]; D.seaage = { g: L.grid, a: new Uint8Array(await getBin(D.base + L.file)) }; } catch (_) { D.seaage = null; } return D.seaage; },
 };
 
@@ -396,6 +397,17 @@ async function render() {
       ${ageMa != null ? `<div class="row"><span>海の底の岩の年齢</span><span>約${ageMa}百万年</span></div>` : ""}
       <div class="say">${ageMa != null ? (ageMa < 20 ? "海底は若い（生まれる所＝海嶺が近い）。" : ageMa > 100 ? "海底は古い（冷えて重くなった板）。" : "海底は中くらいの年齢。") : ""}</div>${tag(sst != null ? "観測から（NOAA OISST）・EarthByte" : "研究モデル（EarthByte）")}`));
   }
+  /* 波（いちばん近い海の升目。岸の近くは少しずれる） */
+  const wv = await later.wave();
+  if (wv) { const g = wv.L.grid, n = g.nx * g.ny, pick = (i, j) => { const k = Math.min(g.ny - 1, Math.max(0, j)) * g.nx + ((i % g.nx) + g.nx) % g.nx; return wv.a[k] === g.none ? null : k; };
+    const fi = Math.round((((lon - g.lon0) % 360) + 360) % 360 / g.dx), fj = Math.round((g.lat0 - lat) / g.dy); let k = null, far = 0;
+    for (let r = 0; r <= 3 && k == null; r++) for (let dj = -r; dj <= r && k == null; dj++) for (let di = -r; di <= r && k == null; di++) if (Math.max(Math.abs(di), Math.abs(dj)) === r) { k = pick(fi + di, fj + dj); far = r; }
+    if (k != null) { const h = wv.a[k] * 0.1, dirB = wv.a[n + k], perB = wv.a[2 * n + k], dir = dirB === g.none ? null : dirB * 360 / 254, per = perB === g.none ? null : perB * 0.2;
+      const kind = per == null ? "" : per >= 10 ? "うねり（遠くの風で生まれて旅してきた波）" : per < 6 ? "風の波（近くの風が立てた波）" : "風の波とうねりのあいだ";
+      out.push(tile("", "🌊 波", `<div class="big">${h.toFixed(1)}<small>m</small></div><div class="mid">波の高さ（有義波高）</div>
+        ${dir != null ? `<div class="row"><span>波が来る方向</span><span>${DIRS[Math.round(dir / 22.5) % 16]}から</span></div>` : ""}
+        ${per != null ? `<div class="row"><span>周期（波と波の間）</span><span>${per.toFixed(1)} 秒</span></div>` : ""}
+        <div class="say">${kind ? kind + "。" : ""}有義波高は大きい方から3分の1の波の平均で、一番大きい波は2倍近くになることがあります。${far ? "選んだ場所は陸か岸の近くなので、近くの沖の値です。" : ""}港や湾の中の波ではありません。この先の波は <a href="https://www.jma.go.jp/" target="_blank" rel="noopener">気象庁</a> の波浪の情報へ。</div>${tag("計算（GFS-Wave）", new Date(wv.L.meta.validTime))}`)); } }
   /* 地面の下 */
   const [pl, qs] = await Promise.all([later.plate(), later.quakes()]);
   let plateHtml = "", qHtml = "";

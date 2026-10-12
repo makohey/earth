@@ -110,6 +110,11 @@ jobs:
         continue-on-error: true
         run: python scripts/fetch_gfs.py --out _site/data/latest
 
+      - name: 波（GFS-Wave の高さ・向き・周期。GFS と同じ回を1回だけ。取れなければ前の回を使う）
+        if: steps.reuse.outputs.hit != 'true'
+        continue-on-error: true
+        run: python scripts/fetch_wave.py --latest _site/data/latest --prev saved_latest
+
       - name: 全球の衛星赤外画像（GMGSI）を、時計の時刻以前で一番新しいものから
         if: steps.reuse.outputs.hit != 'true'
         continue-on-error: true
