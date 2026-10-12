@@ -81,6 +81,12 @@
 </section>
 
 <section class="card">
+  <h2><span class="no">02+</span>比べる（気圧と風は関係ある？）</h2>
+  <p class="what">①の同じ記録で、2つの数字が一緒に動いているかを計算します。気圧そのものと、まわりとの気圧の差（気圧の坂の急さ）の両方を風と比べます。</p>
+  <div id="corr"></div>
+</section>
+
+<section class="card">
   <h2><span class="no">03</span>見張り（未来の言葉が混ざっていないか）</h2>
   <p class="what">のちにAIが書いた文を、表示する前にここで調べます。試しに文を入れてみてください（例：「昨日は気圧が下がった」「明日は雨でしょう」）。</p>
   <textarea id="guardIn" placeholder="ここに文を入れる">10月11日の夜、京都の気圧は6時間で3hPa下がった。明日は雨が降るでしょう。</textarea>
@@ -142,7 +148,11 @@ async function extract(days) {
   const cut = Date.now() - days * 86400000, sets = INDEX.sets.filter(s => +new Date(s.validTime) >= cut);
   const rows = [];
   for (const s of sets) { try { const { m, bufs } = await loadSet(s), L = m.layers, r = { t: new Date(m.validTime) };
-      if (L.pressure) r.p = scalarAt(L.pressure, bufs.pressure, place.lon, place.lat);
+      if (L.pressure) { const pa = (lo, la) => scalarAt(L.pressure, bufs.pressure, lo, la);
+        r.p = pa(place.lon, place.lat);
+        const cl = Math.cos(place.lat * D2R), dxk = 2 * 111.32 * Math.max(cl, 0.2), dyk = 2 * 111.32;   /* 東西・南北に1°ずつ離れた所との差 */
+        const e = pa(place.lon + 1, place.lat), w = pa(place.lon - 1, place.lat), n = pa(place.lon, place.lat + 1), so = pa(place.lon, place.lat - 1);
+        if ([e, w, n, so].every(v => v != null)) r.g = Math.hypot((e - w) / dxk, (n - so) / dyk) * 100; }   /* 100kmあたり何hPa */
       if (L["wind-10m"]) Object.assign(r, windAt(L["wind-10m"], bufs["wind-10m"], place.lon, place.lat));
       if (L.rain) r.rain = scalarAt(L.rain, bufs.rain, place.lon, place.lat);
       rows.push(r); } catch (_) {} }
@@ -182,6 +192,33 @@ function facts(rows) {
   return out;
 }
 
+/* ===== ②+ 比べる（相関） ===== */
+function pearson(xs, ys) { const n = xs.length; if (n < 3) return null; const mx = xs.reduce((a, b) => a + b) / n, my = ys.reduce((a, b) => a + b) / n;
+  let sxy = 0, sxx = 0, syy = 0; for (let i = 0; i < n; i++) { const a = xs[i] - mx, b = ys[i] - my; sxy += a * b; sxx += a * a; syy += b * b; }
+  return sxx > 1e-6 && syy > 1e-6 ? sxy / Math.sqrt(sxx * syy) : null; }
+const strength = r => { const a = Math.abs(r); return a < 0.3 ? "ほとんど関係が見えない" : a < 0.7 ? "ある程度いっしょに動いている" : "強くいっしょに動いている"; };
+function scatter(pts, xl, yl) {
+  if (pts.length < 2) return ""; const W = 360, H = 200, P = 34, xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+  let x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(0, ...ys), y1 = Math.max(...ys); if (x1 - x0 < 1e-6) { x0 -= 1; x1 += 1; } if (y1 - y0 < 1e-6) y1 += 1;
+  const X = v => P + (v - x0) / (x1 - x0) * (W - P - 10), Y = v => 10 + (1 - (v - y0) / (y1 - y0)) * (H - 44);
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${xl}と${yl}の散らばり">
+    <line x1="${P}" y1="${H - 34}" x2="${W - 10}" y2="${H - 34}" stroke="rgba(150,172,226,.25)"/><line x1="${P}" y1="10" x2="${P}" y2="${H - 34}" stroke="rgba(150,172,226,.25)"/>
+    ${pts.map(p => `<circle cx="${X(p[0]).toFixed(1)}" cy="${Y(p[1]).toFixed(1)}" r="3.5" fill="#c9a7ff" opacity=".85"/>`).join("")}
+    <text x="${(P + W) / 2}" y="${H - 14}" fill="#9ca7bf" font-size="11" text-anchor="middle">${xl}（${x0.toFixed(1)}〜${x1.toFixed(1)}）</text>
+    <text x="4" y="${H - 38}" fill="#9ca7bf" font-size="11">${yl}</text></svg>`;
+}
+function corrHtml(rows) {
+  const A = rows.filter(r => r.p != null && r.spd != null), B = rows.filter(r => r.g != null && r.spd != null);
+  if (A.length < 3) return `<p class="note">比べるには記録が3回分以上いります（いま ${A.length} 回分）。</p>`;
+  const rA = pearson(A.map(r => r.p), A.map(r => r.spd)), rB = B.length >= 3 ? pearson(B.map(r => r.g), B.map(r => r.spd)) : null;
+  const line = (label, r, n) => r == null ? `<p style="margin:6px 0;font-size:14px"><b>${label}</b>：どちらかが期間中ほとんど変わっていないので、比べられません。</p>` : `<p style="margin:6px 0;font-size:14.5px"><b>${label}</b>：相関 <span style="font-family:var(--mono)">${r.toFixed(2)}</span>（${n} 回分）→ ${strength(r)}${Math.abs(r) >= 0.3 ? (r < 0 ? "。<b>片方が下がると、もう片方が上がる</b>向き" : "。<b>同じ向き</b>に動く") : ""}。</p>`;
+  const few = A.length < 12 ? `<p class="note">⚠ 記録がまだ ${A.length} 回分と少ないので、たまたま似て見えている可能性もあります。記録が増えるほど、この数字は信用できるようになります（目安：20回分＝5日以上）。</p>` : "";
+  return line("気圧の高さ と 風の速さ", rA, A.length) + scatter(A.map(r => [r.p, r.spd]), "気圧 hPa", "風 m/s")
+    + line("気圧の坂の急さ と 風の速さ", rB, B.length) + (rB != null ? scatter(B.map(r => [r.g, r.spd]), "気圧の坂 hPa/100km", "風 m/s") : "")
+    + few
+    + `<p class="note">見方：相関は −1〜+1 の数字。0 に近いと関係が見えない、±1 に近いほど一緒に動く。<br>しくみの話：風を押すのは、気圧の高さそのものより、<b>まわりとの気圧の差（坂の急さ）</b>です。低気圧や台風の近くは坂が急になりやすいので、「気圧が低い時に風が強い」が同時に起きやすくなります。どちらの相関が強く出るか、比べてみてください。<br>この期間に台風や低気圧が近くを通ったかは、地球儀の雲や、気象庁の「過去の台風」の記録で確かめられます。<br>相関は「一緒に動いた」ことを示すだけで、どちらが原因かまでは教えてくれません。</p>`;
+}
+
 /* ===== ③ 見張り ===== */
 const FUTURE = ["明日", "あした", "あす", "明後日", "あさって", "来週", "今夜", "今晩", "これから", "この先", "今後", "でしょう", "見込み", "予想", "予報", "おそれ", "恐れ", "可能性があります", "なりそう", "降りそう", "しそう", "になるかも", "だろう", "傘を", "避難", "気をつけて"];
 function guard(text) { const hits = FUTURE.filter(w => text.includes(w)); return { ok: !hits.length, hits }; }
@@ -219,6 +256,7 @@ async function render() {
   $("tbl").innerHTML = `<tr><th>時刻（日本時間）</th><th>気圧 hPa</th><th>風</th><th>雨</th></tr>` + rows.slice().reverse().map(r => `<tr><td>${F.format(r.t)}</td><td>${r.p == null ? "—" : r.p.toFixed(1)}</td><td>${r.spd == null ? "—" : DIRS[Math.round(r.from / 22.5) % 16] + " " + r.spd.toFixed(1)}</td><td>${rainWord(r.rain)}</td></tr>`).join("");
   $("arcnote").textContent = `記録庫には全部で ${INDEX.sets.length} 回分（${INDEX.keepDays}日分まで残します）。この期間で使ったのは ${rows.length} 回分。`;
   $("facts").innerHTML = facts(rows).map(f => `<li>${esc(f)}</li>`).join("");
+  $("corr").innerHTML = corrHtml(rows);
 }
 document.querySelectorAll("[data-days]").forEach(b => b.addEventListener("click", () => { days = +b.dataset.days; document.querySelectorAll("[data-days]").forEach(x => x.setAttribute("aria-pressed", String(x === b))); render(); }));
 $("guardIn").addEventListener("input", runGuard);
