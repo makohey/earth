@@ -42,7 +42,8 @@ jobs:
       - name: ページを組み立てる
         run: |
           mkdir -p _site
-          cp index.html app.js dashboard.html lab.html _site/
+          cp index.html app.js dashboard.html lab.html astro.js _site/
+          A=$(sha256sum astro.js | cut -c1-10); sed -i "s|src=\"astro.js\"|src=\"astro.js?v=$A\"|" _site/dashboard.html
           # 版の番号：app.js の中身から短い印を作って index.html の読み込みに付ける。
           # 中身が変わると別のファイル扱いになり、ブラウザが古い app.js を使い回さない（中身が同じなら印も同じなので、むだに読み直さない）
           V=$(sha256sum app.js | cut -c1-10)

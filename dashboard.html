@@ -71,6 +71,14 @@
   .place .big{font-size:30px}
   .warn{color:var(--warn)}
   .link a{display:block;margin-top:8px;font-size:15px}
+  .astro{max-width:1100px;margin:12px auto 0}
+  .astro-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:8px}
+  @media (max-width:760px){.astro-grid{grid-template-columns:1fr}}
+  .astro select{width:100%;font:inherit;font-size:15px;color:var(--ink);background:rgba(8,12,24,.6);border:1px solid var(--tile-edge);border-radius:10px;padding:8px 10px;margin:6px 0}
+  .astro input[type=range]{width:100%;accent-color:#c9a7ff;margin:8px 0 2px}
+  .astro .ctrl{display:flex;gap:10px;align-items:center;margin:4px 0 6px;font-size:13px;color:var(--ink-soft)}
+  .astro .ctrl button{white-space:nowrap;font:inherit;font-size:13px;color:var(--ink);background:transparent;border:1px solid var(--tile-edge);border-radius:999px;padding:5px 12px;cursor:pointer}
+  .astro .mid{margin-bottom:4px}
   footer{max-width:1100px;margin:22px auto 0;font-size:11.5px;color:var(--ink-faint);line-height:1.7}
   #loading{max-width:1100px;margin:30px auto;color:var(--ink-soft)}
 </style>
@@ -105,6 +113,7 @@
 
 <div id="loading">データを読み込んでいます…</div>
 <div class="grid" id="grid" hidden></div>
+<section class="tile astro" id="astro"></section>
 
 <footer>
   天気の数字は GFS（米国 NOAA の全球モデル）の計算で、約100km四方（1°の升目）の様子です。その場所の観測ではありません。この先の天気は扱いません（気象庁へ）。<br>
@@ -112,6 +121,7 @@
   データは地球儀が自分のページに置いた分だけを読みます（水源へは行きません）。
 </footer>
 
+<script src="astro.js"></script>
 <script>
 "use strict";
 const D2R = Math.PI / 180;
@@ -414,6 +424,7 @@ async function render() {
     <a href="https://www.jma.go.jp/bosai/map.html#contents=typhoon" target="_blank" rel="noopener">気象庁の台風情報 →</a>
     <div class="say">予報は、許可を受けた気象庁などの情報を見てください。</div>`));
   grid.innerHTML = out.join(""); grid.hidden = false;
+  try { window.Astro?.render(cur); } catch (e) { console.warn("アストロノミーを描けませんでした", e); }
 }
 
 (async () => {
