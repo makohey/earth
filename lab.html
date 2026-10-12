@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>実験室（ラボ）</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root{
+    --space:#03050b; --ink:#e4e9f4; --ink-soft:#9ca7bf; --ink-faint:#67718a;
+    --tile:rgba(20,30,58,.72); --tile-edge:rgba(150,172,226,.16); --accent:#8fe3d4; --warn:#e9b35a; --bad:#ff7d7d; --lab:#c9a7ff;
+    --ui:"Zen Kaku Gothic New","Hiragino Sans","Noto Sans JP",system-ui,sans-serif;
+    --mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:radial-gradient(120% 80% at 50% 0%,#170f30 0%,var(--space) 70%);color:var(--ink);font-family:var(--ui);min-height:100%}
+  body{padding:calc(14px + env(safe-area-inset-top,0px)) 16px 40px}
+  a{color:var(--accent)}
+  .wrap{max-width:1000px;margin:0 auto}
+  header{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:6px}
+  header h1{font-size:20px;margin:0}
+  header .badge{font-family:var(--mono);font-size:11px;color:var(--lab);border:1px solid var(--lab);border-radius:999px;padding:2px 8px}
+  header .back{margin-left:auto;font-size:13px}
+  .lead{font-size:13px;color:var(--ink-soft);line-height:1.7;margin:0 0 14px}
+  .card{background:var(--tile);border:1px solid var(--tile-edge);border-radius:16px;padding:14px 16px;margin-bottom:12px}
+  .card h2{font-size:15px;margin:0 0 4px;display:flex;gap:8px;align-items:center}
+  .card h2 .no{font-family:var(--mono);font-size:11px;color:var(--lab)}
+  .card .what{font-size:12.5px;color:var(--ink-soft);margin:0 0 10px;line-height:1.6}
+  .ctrl{display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:14px;margin-bottom:10px}
+  .ctrl button{font:inherit;font-size:13px;color:var(--ink);background:transparent;border:1px solid var(--tile-edge);border-radius:999px;padding:5px 12px;cursor:pointer}
+  .ctrl button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);background:rgba(143,227,212,.12)}
+  .place{font-size:18px;font-weight:700}
+  .chart{width:100%;height:auto;display:block;margin:4px 0 8px}
+  .tbl{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
+  .tbl th,.tbl td{padding:5px 6px;border-bottom:1px solid var(--tile-edge);text-align:right;white-space:nowrap}
+  .tbl th:first-child,.tbl td:first-child{text-align:left}
+  .tbl th{color:var(--ink-faint);font-weight:500;font-size:12px}
+  .tblbox{max-height:280px;overflow:auto}
+  .facts{margin:0;padding-left:1.2em;line-height:1.85;font-size:14.5px}
+  .facts small{color:var(--ink-faint)}
+  textarea{width:100%;min-height:90px;font:inherit;font-size:15px;color:var(--ink);background:rgba(8,12,24,.6);border:1px solid var(--tile-edge);border-radius:10px;padding:10px}
+  .verdict{margin-top:8px;font-size:14px}
+  .ok{color:var(--accent)} .ng{color:var(--bad)} .mid{color:var(--warn)}
+  mark{background:rgba(255,125,125,.25);color:var(--ink);border-radius:3px;padding:0 2px}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:14px}
+  .kv span:nth-child(odd){color:var(--ink-soft)}
+  .note{font-size:12px;color:var(--ink-faint);line-height:1.7}
+  #loading{color:var(--ink-soft)}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>実験室</h1><span class="badge">LAB・AIなし</span>
+  <a class="back" href="dashboard.html">← ダッシュボードへ</a>
+</header>
+<p class="lead">ここは試しの場所です。のちにローカルAI（端末の中だけで動くAI）を入れる時の「部品」を、AIなしで一つずつ確かめます。扱うのは<b>過去の記録だけ</b>。この先の天気は扱いません。<br>
+流れ：①記録庫から抜き出す（計算）→ ②気づきを並べる（今は決まった文。いずれAIの席）→ ③見張り（未来の言葉が混ざったら止める）→ ④この端末でAIは動きそう？</p>
+
+<div id="loading">読み込んでいます…</div>
+<div id="main" hidden>
+
+<section class="card">
+  <h2><span class="no">01</span>抜き出す（記録庫から・計算）</h2>
+  <p class="what">ダッシュボードで選んでいる場所の、ためた記録を時間の順に並べます。場所を変えるときはダッシュボードで選んでからここに戻ってください。</p>
+  <div class="ctrl"><span class="place" id="place"></span><span style="flex:1"></span>
+    <span style="color:var(--ink-soft);font-size:13px">期間</span>
+    <button type="button" data-days="1">1日</button><button type="button" data-days="3" aria-pressed="true">3日</button><button type="button" data-days="7">7日</button><button type="button" data-days="31">ぜんぶ</button></div>
+  <div id="charts"></div>
+  <div class="tblbox"><table class="tbl" id="tbl"></table></div>
+  <p class="note" id="arcnote"></p>
+</section>
+
+<section class="card">
+  <h2><span class="no">02</span>気づきを並べる（今はAIなし・決まった文）</h2>
+  <p class="what">①の数字から、プログラムが事実だけを拾って並べます。ここがのちにAIの席になります（AIには、この事実だけを渡す予定）。</p>
+  <ul class="facts" id="facts"></ul>
+</section>
+
+<section class="card">
+  <h2><span class="no">03</span>見張り（未来の言葉が混ざっていないか）</h2>
+  <p class="what">のちにAIが書いた文を、表示する前にここで調べます。試しに文を入れてみてください（例：「昨日は気圧が下がった」「明日は雨でしょう」）。</p>
+  <textarea id="guardIn" placeholder="ここに文を入れる">10月11日の夜、京都の気圧は6時間で3hPa下がった。明日は雨が降るでしょう。</textarea>
+  <div class="verdict" id="guardOut"></div>
+  <p class="note">いま見張っている言葉：<span id="guardList"></span></p>
+</section>
+
+<section class="card">
+  <h2><span class="no">04</span>この端末でAIは動きそう？（何も読み込みません）</h2>
+  <p class="what">ブラウザが持っている情報だけを見ます。モデルの読み込みはしません。</p>
+  <div class="kv" id="env"></div>
+  <p class="note" id="envnote"></p>
+</section>
+
+<p class="note">データ：地球儀が自分のページに置いた記録庫（GFS の風・雨・気圧の計算、約100km四方）。観測ではありません。水源へは行きません。</p>
+</div>
+</div>
+
+<script>
+"use strict";
+const D2R = Math.PI / 180, $ = id => document.getElementById(id);
+const DIRS = ["北","北北東","北東","東北東","東","東南東","南東","南南東","南","南南西","南西","西南西","西","西北西","北西","北北西"];
+const F = new Intl.DateTimeFormat("ja-JP", { timeZone: "Asia/Tokyo", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+const FS = new Intl.DateTimeFormat("ja-JP", { timeZone: "Asia/Tokyo", month: "numeric", day: "numeric", hour: "numeric" });
+const getJSON = async u => { const r = await fetch(u, { cache: "no-cache" }); if (!r.ok) throw new Error(u + " " + r.status); return r.json(); };
+const getBin = async u => { const r = await fetch(u); if (!r.ok) throw new Error(u + " " + r.status); return r.arrayBuffer(); };
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+let place = { name: "京都市", lat: 35.01, lon: 135.77 };
+try { const p = JSON.parse(localStorage.getItem("dash.place") || "null"); if (p && Number.isFinite(p.lat)) place = p; } catch (_) {}
+const qp = new URLSearchParams(location.search); if (qp.has("lat") && qp.has("lon")) place = { name: qp.get("name") || "選んだ地点", lat: +qp.get("lat"), lon: +qp.get("lon") };
+
+/* ===== 格子から一点の値を読む（ダッシュボードと同じ考え方） ===== */
+function scalarAt(L, buf, lon, lat) {
+  const g = L.grid, e = L.meta.encoding, q = e.type === "linear" ? new Int16Array(buf) : new Uint8Array(buf), Lm = Math.log1p(e.max || 1);
+  const dec = c => c === e.missing ? NaN : e.type === "log1p" ? (c === e.zero ? 0 : Math.expm1((c - 1) / e.levels * Lm)) : e.type === "raw" ? c : c * e.scale + e.offset;
+  const at = (i, j) => dec(q[Math.min(Math.max(j, 0), g.ny - 1) * g.nx + ((i % g.nx) + g.nx) % g.nx]);
+  const fx = (((lon - g.lon0) % 360) + 360) % 360 / g.dx, fy = (g.lat0 - lat) / g.dy, i0 = Math.floor(fx), j0 = Math.min(Math.max(Math.floor(fy), 0), g.ny - 2), tx = fx - i0, ty = Math.min(Math.max(fy - j0, 0), 1);
+  const a = at(i0, j0), b = at(i0 + 1, j0), c = at(i0, j0 + 1), d = at(i0 + 1, j0 + 1);
+  if ([a, b, c, d].some(Number.isNaN)) { const v = at(Math.round(fx), Math.round(fy)); return Number.isNaN(v) ? null : v; }
+  return (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty;
+}
+function windAt(L, buf, lon, lat) {
+  const g = L.grid, raw = new Int16Array(buf);
+  const x = (((lon - g.lo1) % 360) + 360) % 360 / g.dx, y = Math.min(Math.max((g.la1 - lat) / g.dy, 0), g.ny - 1);
+  const i0 = Math.floor(x) % g.nx, i1 = (i0 + 1) % g.nx, fx = x - Math.floor(x), j0 = Math.floor(y), j1 = Math.min(j0 + 1, g.ny - 1), fy = y - j0;
+  const v = (i, j, k) => raw[2 * (j * g.nx + i) + k] / g.scale, bil = k => (v(i0, j0, k) * (1 - fx) + v(i1, j0, k) * fx) * (1 - fy) + (v(i0, j1, k) * (1 - fx) + v(i1, j1, k) * fx) * fy;
+  const u = bil(0), w = bil(1); return { spd: Math.hypot(u, w), from: (Math.atan2(-u, -w) / D2R + 360) % 360 };
+}
+
+/* ===== ① 抜き出す ===== */
+let INDEX = null; const cache = {};
+async function loadSet(s) {
+  if (cache[s.id]) return cache[s.id];
+  const m = await getJSON(`data/archive/${s.id}/meta.json`), bufs = {};
+  await Promise.all(Object.entries(m.layers).map(async ([k, L]) => { bufs[k] = await getBin(`data/archive/${s.id}/${L.file}`); }));
+  return (cache[s.id] = { m, bufs });
+}
+async function extract(days) {
+  const cut = Date.now() - days * 86400000, sets = INDEX.sets.filter(s => +new Date(s.validTime) >= cut);
+  const rows = [];
+  for (const s of sets) { try { const { m, bufs } = await loadSet(s), L = m.layers, r = { t: new Date(m.validTime) };
+      if (L.pressure) r.p = scalarAt(L.pressure, bufs.pressure, place.lon, place.lat);
+      if (L["wind-10m"]) Object.assign(r, windAt(L["wind-10m"], bufs["wind-10m"], place.lon, place.lat));
+      if (L.rain) r.rain = scalarAt(L.rain, bufs.rain, place.lon, place.lat);
+      rows.push(r); } catch (_) {} }
+  return rows.sort((a, b) => a.t - b.t);
+}
+function lineChart(rows, key, label, unit, color, digits) {
+  const pts = rows.filter(r => r[key] != null); if (pts.length < 2) return "";
+  const W = 360, H = 120, P = 6, vs = pts.map(r => r[key]); let mn = Math.min(...vs), mx = Math.max(...vs); if (mx - mn < 1e-6) { mn -= 1; mx += 1; }
+  const t0 = +pts[0].t, t1 = +pts[pts.length - 1].t, X = t => P + (t - t0) / (t1 - t0) * (W - P - 8), Y = v => 14 + (1 - (v - mn) / (mx - mn)) * (H - 34);
+  const path = pts.map((r, i) => `${i ? "L" : "M"}${X(+r.t).toFixed(1)} ${Y(r[key]).toFixed(1)}`).join(" ");
+  const dots = pts.map(r => `<circle cx="${X(+r.t).toFixed(1)}" cy="${Y(r[key]).toFixed(1)}" r="2.4" fill="${color}"/>`).join("");
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${label}の移り変わり">
+    <text x="${P}" y="10" fill="#9ca7bf" font-size="11">${label}（${unit}）</text>
+    <text x="${W - 8}" y="10" fill="#67718a" font-size="10" text-anchor="end">高 ${mx.toFixed(digits)} ／ 低 ${mn.toFixed(digits)}</text>
+    <line x1="${P}" y1="${H - 20}" x2="${W - 8}" y2="${H - 20}" stroke="rgba(150,172,226,.2)"/>
+    <path d="${path}" fill="none" stroke="${color}" stroke-width="2"/>${dots}
+    <text x="${P}" y="${H - 6}" fill="#67718a" font-size="10">${FS.format(pts[0].t)}時</text><text x="${W - 8}" y="${H - 6}" fill="#67718a" font-size="10" text-anchor="end">${FS.format(pts[pts.length - 1].t)}時</text></svg>`;
+}
+const rainWord = v => v == null ? "—" : v < 0.1 ? "なし" : v < 3 ? "弱い雨" : v < 10 ? "雨" : v < 20 ? "やや強い雨" : "強い雨";
+
+/* ===== ② 気づきを並べる（決まった文。事実と、どの数字から言ったかだけ） ===== */
+function facts(rows) {
+  const out = [], P = rows.filter(r => r.p != null), Wd = rows.filter(r => r.spd != null);
+  if (rows.length < 2) return [`記録がまだ ${rows.length} 回分しかありません。2回分以上たまると、比べた気づきが出ます。`];
+  out.push(`${F.format(rows[0].t)} から ${F.format(rows[rows.length - 1].t)} までの ${rows.length} 回分の記録を見ました。`);
+  if (P.length) { const lo = P.reduce((a, b) => b.p < a.p ? b : a), hi = P.reduce((a, b) => b.p > a.p ? b : a);
+    out.push(`気圧がいちばん低かったのは ${F.format(lo.t)} の ${lo.p.toFixed(1)} hPa、いちばん高かったのは ${F.format(hi.t)} の ${hi.p.toFixed(1)} hPa でした（差 ${(hi.p - lo.p).toFixed(1)} hPa）。`);
+    let best = null; for (let i = 1; i < P.length; i++) { const h = (P[i].t - P[i - 1].t) / 3600000; if (h > 0 && h <= 6.5) { const d = P[i].p - P[i - 1].p; if (!best || Math.abs(d) > Math.abs(best.d)) best = { d, a: P[i - 1], b: P[i] }; } }
+    if (best && Math.abs(best.d) >= 1) out.push(`いちばん大きく${best.d < 0 ? "下がった" : "上がった"}のは ${F.format(best.a.t)}〜${F.format(best.b.t)} の6時間で、${(best.d >= 0 ? "+" : "") + best.d.toFixed(1)} hPa でした。`); }
+  if (Wd.length) { const mx = Wd.reduce((a, b) => b.spd > a.spd ? b : a);
+    out.push(`風がいちばん強かったのは ${F.format(mx.t)} で、${DIRS[Math.round(mx.from / 22.5) % 16]}の風 ${mx.spd.toFixed(1)} m/s でした。`);
+    let turn = null; for (let i = 1; i < Wd.length; i++) { let d = Math.abs(Wd[i].from - Wd[i - 1].from); d = Math.min(d, 360 - d); if (Wd[i].spd > 2 && Wd[i - 1].spd > 2 && (!turn || d > turn.d)) turn = { d, a: Wd[i - 1], b: Wd[i] }; }
+    if (turn && turn.d >= 60) out.push(`風の向きが大きく変わったのは ${F.format(turn.a.t)}〜${F.format(turn.b.t)} で、${DIRS[Math.round(turn.a.from / 22.5) % 16]} から ${DIRS[Math.round(turn.b.from / 22.5) % 16]} に変わりました。`); }
+  const R = rows.filter(r => r.rain != null && r.rain >= 0.1); out.push(R.length ? `雨が出ていた回は ${R.length} 回でした（いちばん強かったのは ${F.format(R.reduce((a, b) => b.rain > a.rain ? b : a).t)}）。` : "この期間、雨が出ていた回はありませんでした。");
+  if (P.length && Wd.length) { const lo = P.reduce((a, b) => b.p < a.p ? b : a), mx = Wd.reduce((a, b) => b.spd > a.spd ? b : a);
+    if (Math.abs(lo.t - mx.t) <= 6 * 3600000) out.push(`気圧がいちばん低かった時と、風がいちばん強かった時が近い（6時間以内）ですね。地球儀でその時刻のまわりの雲や気圧の形を見ると、何かが通ったか確かめられるかもしれません。`); }
+  return out;
+}
+
+/* ===== ③ 見張り ===== */
+const FUTURE = ["明日", "あした", "あす", "明後日", "あさって", "来週", "今夜", "今晩", "これから", "この先", "今後", "でしょう", "見込み", "予想", "予報", "おそれ", "恐れ", "可能性があります", "なりそう", "降りそう", "しそう", "になるかも", "だろう", "傘を", "避難", "気をつけて"];
+function guard(text) { const hits = FUTURE.filter(w => text.includes(w)); return { ok: !hits.length, hits }; }
+function runGuard() {
+  const t = $("guardIn").value, g = guard(t);
+  let shown = esc(t); for (const w of g.hits) shown = shown.split(esc(w)).join(`<mark>${esc(w)}</mark>`);
+  $("guardOut").innerHTML = (g.ok ? `<b class="ok">通す</b>：未来の言葉は見つかりませんでした。` : `<b class="ng">止める</b>：未来や助言の言葉が入っています（${g.hits.map(esc).join("・")}）。この文は表示せず、気象庁への案内に替えます。`) + `<div style="margin-top:6px;color:var(--ink-soft)">${shown}</div>`;
+}
+
+/* ===== ④ 端末の下調べ（何も読み込まない） ===== */
+async function envCheck() {
+  const kv = [], ua = navigator.userAgent;
+  kv.push(["WebGPU（GPUで計算する仕組み）", "gpu" in navigator ? "あり" : "なし"]);
+  let note = "";
+  if ("gpu" in navigator) { try { const ad = await navigator.gpu.requestAdapter();
+      if (ad) { const lim = ad.limits; kv.push(["GPUの1つの入れ物の上限", `${Math.round((lim.maxBufferSize || 0) / 1048576)} MB`]); kv.push(["GPUの保存場所の上限", `${Math.round((lim.maxStorageBufferBindingSize || 0) / 1048576)} MB`]);
+        kv.push(["16ビット小数（軽いモデル向け）", ad.features?.has?.("shader-f16") ? "使える" : "使えない"]); }
+      else kv.push(["GPUの準備", "できませんでした"]); } catch (e) { kv.push(["GPUの準備", "エラー：" + e.message]); } }
+  kv.push(["CPUのコア数", navigator.hardwareConcurrency || "不明"]);
+  kv.push(["メモリのめやす", navigator.deviceMemory ? `${navigator.deviceMemory} GB 以上` : "このブラウザは教えてくれない（Safari など）"]);
+  try { const est = await navigator.storage?.estimate?.(); if (est) kv.push(["このページが使える保存場所", `約 ${(est.quota / 1073741824).toFixed(1)} GB（今は ${(est.usage / 1048576).toFixed(0)} MB 使用）`]); } catch (_) {}
+  const noAd = kv.some(r => r[0] === "GPUの準備"), hasGPU = kv[0][1] === "あり" && !noAd, f16 = kv.some(r => r[0].startsWith("16ビット") && r[1] === "使える");
+  note = kv[0][1] === "あり" && noAd ? "WebGPU の入口はあるけれど、GPU の準備ができませんでした。このままだとAIはかなり遅いか、動かない見込みです。" : hasGPU ? (f16 ? "小さいモデル（0.5B〜1.5B くらい）なら動く見込みがあります。" : "WebGPU はありますが16ビット小数が使えないので、モデルを選ぶ必要があります。") : "WebGPU がないので、AIを動かすとかなり遅くなるか、動かない見込みです。";
+  $("env").innerHTML = kv.map(([k, v]) => `<span>${esc(k)}</span><span>${esc(v)}</span>`).join("");
+  $("envnote").textContent = "見込み：" + note + "（ここではモデルを読み込んでいません。実際の速さは、読み込んで試すまで分かりません）";
+}
+
+/* ===== 組み立て ===== */
+let days = 3;
+async function render() {
+  $("place").textContent = place.name.replace(/のあたり$/, "") + ` （${Math.abs(place.lat).toFixed(1)}°${place.lat >= 0 ? "N" : "S"}, ${Math.abs(place.lon).toFixed(1)}°${place.lon >= 0 ? "E" : "W"}）`;
+  $("charts").innerHTML = '<p class="note">記録を読んでいます…</p>';
+  const rows = await extract(days);
+  $("charts").innerHTML = lineChart(rows, "p", "気圧", "hPa", "#8fe3d4", 1) + lineChart(rows, "spd", "風の速さ", "m/s", "#c9a7ff", 1) + lineChart(rows, "rain", "雨の強さ", "mm/時", "#7fb4ff", 1) || '<p class="note">グラフは記録が2回分以上たまると出ます。</p>';
+  $("tbl").innerHTML = `<tr><th>時刻（日本時間）</th><th>気圧 hPa</th><th>風</th><th>雨</th></tr>` + rows.slice().reverse().map(r => `<tr><td>${F.format(r.t)}</td><td>${r.p == null ? "—" : r.p.toFixed(1)}</td><td>${r.spd == null ? "—" : DIRS[Math.round(r.from / 22.5) % 16] + " " + r.spd.toFixed(1)}</td><td>${rainWord(r.rain)}</td></tr>`).join("");
+  $("arcnote").textContent = `記録庫には全部で ${INDEX.sets.length} 回分（${INDEX.keepDays}日分まで残します）。この期間で使ったのは ${rows.length} 回分。`;
+  $("facts").innerHTML = facts(rows).map(f => `<li>${esc(f)}</li>`).join("");
+}
+document.querySelectorAll("[data-days]").forEach(b => b.addEventListener("click", () => { days = +b.dataset.days; document.querySelectorAll("[data-days]").forEach(x => x.setAttribute("aria-pressed", String(x === b))); render(); }));
+$("guardIn").addEventListener("input", runGuard);
+$("guardList").textContent = FUTURE.join("・");
+(async () => {
+  try { INDEX = await getJSON("data/archive/index.json"); } catch (e) { $("loading").textContent = "記録庫を読めませんでした（" + e.message + "）"; return; }
+  $("loading").remove(); $("main").hidden = false;
+  runGuard(); envCheck(); render();
+})();
+</script>
+</body>
+</html>

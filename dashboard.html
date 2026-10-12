@@ -80,6 +80,7 @@
   <h1>地点ダッシュボード</h1>
   <span class="sub">試作・過去と今の記録だけ（予報ではありません）</span>
   <a class="back" href="./">← 地球儀へ</a>
+  <a class="back" id="lablink" href="lab.html" style="margin-left:12px" hidden>実験室 →</a>
 </header>
 
 <div class="bar">
@@ -421,6 +422,8 @@ async function render() {
   $("loading").remove();
   let saved = null; try { saved = JSON.parse(store.get("dash.place") || "null"); } catch (_) {}
   const qp = new URLSearchParams(location.search);
+  if (qp.get("lab") === "1") { try { localStorage.setItem("dash.lab", "1"); } catch (_) {} }
+  try { if (localStorage.getItem("dash.lab") === "1") $("lablink").hidden = false; } catch (_) {}
   if (qp.has("lat") && qp.has("lon")) choose(qp.get("name") || nearestName(+qp.get("lat"), +qp.get("lon")), +qp.get("lat"), +qp.get("lon"));
   else if (saved && Number.isFinite(saved.lat)) choose(saved.name, saved.lat, saved.lon);
   else choose("京都市", 35.01, 135.77);
