@@ -73,7 +73,7 @@ async function probe(m, msg) {
   log(`読み込めませんでした：${msg}\n調べた結果 → ${out.join("／")}\n保存のしかた：${useIDB() ? "IndexedDB" : "Cache"}`);
 }
 const useIDB = () => !!$("aiIDB")?.checked;
-function setBusy(b) { for (const id of ["aiLight", "aiJp"]) { const el = $(id); if (el) el.disabled = b; } for (const id of ["aiRun", "aiFree", "aiDel", "wAi", "wTestAi"]) { const el = $(id); if (el) el.disabled = b || !engine; } }
+function setBusy(b) { for (const id of ["aiLight", "aiJp"]) { const el = $(id); if (el) el.disabled = b; } for (const id of ["aiRun", "aiFree", "aiDel", "wAi", "wTestAi", "pAi", "pTestAi"]) { const el = $(id); if (el) el.disabled = b || !engine; } }
 
 /* 数字の照合：AIの文に出てくる数字が、渡した事実の中にあるか */
 function numbersOk(out, facts) {
@@ -386,6 +386,8 @@ async function wTest(useAi) {
   } catch (e) { out.innerHTML = `<p class="verdict"><b class="ng">止まりました</b>：${esc(e?.message || e)}</p>`; }
   finally { setBusy(false); }
 }
+/* 07（手帳の練習台・lab-plan.js）に渡す口 */
+window.LABAI = { engine: () => engine, id: () => curId, places: () => places(), findPlace: (t, P) => findPlace(t, P), chip: (k, v) => chip(k, v), busy: b => setBusy(b), stats: () => stats, save: () => saveStats() };
 window.__waiter = { ruleOrder, score, range, findPlace, TESTS, places: () => places() };   /* 実験室の点検用 */
 function showWStats() { const el = $("wStats"); if (!el) return; const w = stats.waiter || {}; el.textContent = Object.keys(w).length ? "これまでの成績（この端末）：" + Object.entries(w).map(([k, v]) => `${k} ${v}`).join("／") : ""; }
 function mountWaiter() {
