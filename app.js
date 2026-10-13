@@ -2273,13 +2273,14 @@ function updateChip() {
     const hf = (now - Clock.now()) / 3600000, h = Math.round(-hf);
     text = h === 0 ? "いまごろ" : h < 0 ? `約${-h}時間前` : `約${h}時間後`;
     ok = true;
-    /* 古さで札の色を変える（3時間ごと）：緑 3時間以内／黄 3〜6／橙 6〜9／赤 9時間以上 */
-    age = hf < 3 ? "a0" : hf < 6 ? "a1" : hf < 9 ? "a2" : "a3";
+    /* 古さで札の色を変える。ふだんは 1.5〜7.5時間前を行き来する（GFS は回の約4時間20分後に出る）ので、
+       緑 4時間以内／黄 4〜8（ふつうの範囲）／橙 8〜12（1回とばした）／赤 12時間以上（2026-10-13 まこと了承） */
+    age = hf < 4 ? "a0" : hf < 8 ? "a1" : hf < 12 ? "a2" : "a3";
   }
   if (mismatch) { text = "時刻ちがいを含む"; ok = false; age = ""; }
   chip.textContent = text; chip.classList.toggle("ok", ok);
   chip.dataset.age = age;
-  chip.title = age === "stop" ? "データの更新が止まっています" : age ? "札の色＝データの古さ（緑 3時間以内／黄 3〜6時間／橙 6〜9時間／赤 9時間以上）" : "";
+  chip.title = age === "stop" ? "データの更新が止まっています" : age ? "札の色＝データの古さ（緑 4時間以内／黄 4〜8時間＝ふつう／橙 8〜12時間／赤 12時間以上）" : "";
 }
 setInterval(updateChip, 60000);
 updateChip();
