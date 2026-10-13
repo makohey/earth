@@ -106,6 +106,8 @@
 
 <section class="card" id="aiCard"></section>
 
+<section class="card" id="waiterCard"></section>
+
 <p class="note">データ：地球儀が自分のページに置いた記録庫（GFS の風・雨・気圧の計算、約100km四方）。観測ではありません。水源へは行きません。</p>
 </div>
 </div>
@@ -149,8 +151,9 @@ async function loadSet(s) {
   await Promise.all(Object.entries(m.layers).map(async ([k, L]) => { bufs[k] = await getBin(`data/archive/${s.id}/${L.file}`); }));
   return (cache[s.id] = { m, bufs });
 }
-async function extract(days) {
-  const cut = Date.now() - days * 86400000, sets = INDEX.sets.filter(s => +new Date(s.validTime) >= cut);
+async function extract(days) { return rowsFor(place, Date.now() - days * 86400000, Infinity); }
+async function rowsFor(place, t0, t1) {
+  const sets = INDEX.sets.filter(s => { const t = +new Date(s.validTime); return t >= t0 && t < t1; });
   const rows = [];
   for (const s of sets) { try { const { m, bufs } = await loadSet(s), L = m.layers, r = { t: new Date(m.validTime) };
       if (L.pressure) { const pa = (lo, la) => scalarAt(L.pressure, bufs.pressure, lo, la);
@@ -227,7 +230,10 @@ function corrHtml(rows) {
 /* ===== ③ 見張り ===== */
 const FUTURE = ["明日", "あした", "あす", "明後日", "あさって", "来週", "今夜", "今晩", "これから", "この先", "今後", "でしょう", "見込み", "予想", "予報", "おそれ", "恐れ", "可能性があります", "なりそう", "降りそう", "しそう", "になるかも", "だろう", "傘を", "避難", "気をつけて"];
 let LAST_FACTS = [];
-window.LAB = { facts: () => LAST_FACTS.slice(), guard: t => guard(t) };   /* 05（ローカルAI）に渡す口：事実のリストと見張り */
+window.LAB = { facts: () => LAST_FACTS.slice(), guard: t => guard(t),   /* 05（ローカルAI）に渡す口：事実のリストと見張り */
+  /* 06（ウエイター）に渡す口：運ぶのはコード。場所の一覧・記録の取り出し・表とグラフの部品 */
+  place: () => place, index: () => INDEX, rows: (pl, t0, t1) => rowsFor(pl, t0, t1),
+  chart: (...a) => lineChart(...a), F, FS, DIRS, rainWord: v => rainWord(v), FUTURE };
 function guard(text) { const hits = FUTURE.filter(w => text.includes(w)); return { ok: !hits.length, hits }; }
 function runGuard() {
   const t = $("guardIn").value, g = guard(t);

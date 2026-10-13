@@ -73,7 +73,7 @@ async function probe(m, msg) {
   log(`読み込めませんでした：${msg}\n調べた結果 → ${out.join("／")}\n保存のしかた：${useIDB() ? "IndexedDB" : "Cache"}`);
 }
 const useIDB = () => !!$("aiIDB")?.checked;
-function setBusy(b) { for (const id of ["aiLight", "aiJp"]) { const el = $(id); if (el) el.disabled = b; } for (const id of ["aiRun", "aiDel"]) { const el = $(id); if (el) el.disabled = b || !engine; } }
+function setBusy(b) { for (const id of ["aiLight", "aiJp"]) { const el = $(id); if (el) el.disabled = b; } for (const id of ["aiRun", "aiDel", "wAi", "wTestAi"]) { const el = $(id); if (el) el.disabled = b || !engine; } }
 
 /* 数字の照合：AIの文に出てくる数字が、渡した事実の中にあるか */
 function numbersOk(out, facts) {
@@ -111,8 +111,180 @@ async function del() {
   catch (e) { log("消せませんでした：" + (e?.message || e)); }
 }
 function showStats() {
-  const el = $("aiStats"); if (!el) return; const rows = Object.entries(stats);
+  const el = $("aiStats"); if (!el) return; const rows = Object.entries(stats).filter(([k]) => k !== "waiter");
   el.innerHTML = rows.length ? rows.map(([id, s]) => `<span>${esc(id)}</span><span>読み込み ${s.loads}回（最後 ${Math.round(s.loadSec || 0)}秒）・書かせた ${s.runs}回・通過 ${s.passed}・止めた ${s.blocked}${s.tps ? `・1秒に約${s.tps.toFixed(1)}トークン` : ""}</span>`).join("") : "<span>まだ記録はありません</span><span></span>";
+}
+
+/* ===== 06 データのウエイター =====
+   AIの仕事は「注文を聞いて伝票に書く」だけ。料理（値・表・グラフ）を運ぶのはコード。
+   伝票はそのまま見せるので、まちがえたら「ちがう料理が来た」と分かる。日付の計算・未来の断り・場所さがしはコード */
+const WHAT = ["気圧", "風", "雨"], DAYS = ["今日", "昨日", "おととい", "3日前", "4日前", "5日前", "6日前", "1週間前", "日付", "最近", "未来"], PARTS = ["一日", "深夜", "朝", "昼", "夕方", "夜"];
+const ORDER_SCHEMA = { type: "object", properties: {
+  what: { type: "array", items: { type: "string", enum: WHAT } }, day: { type: "string", enum: DAYS },
+  date: { type: "string" }, part: { type: "string", enum: PARTS }, where: { type: "string" } }, required: ["what", "day", "part", "where"] };
+const WSYS = [
+  "あなたはデータのウエイターです。お客さんの言葉を、注文の伝票（JSON）に書き直すだけが仕事です。答えや説明は書きません。",
+  `what：${WHAT.join("・")} から選ぶ（言われていなければ3つ全部）`,
+  `day：${DAYS.join("・")} から選ぶ。「10月11日」「10/11」のように日付で言われたら「日付」にして date に「10/11」の形で書く。明日・来週などこの先のことは「未来」。言われていなければ「最近」`,
+  `part：${PARTS.join("・")} から選ぶ（言われていなければ「一日」）`,
+  "where：言われた地名をそのまま書く。言われていなければ空の文字",
+  '例：「おとといの夜の京都の気圧」→ {"what":["気圧"],"day":"おととい","date":"","part":"夜","where":"京都"}',
+  '例：「10月11日の札幌の風と雨」→ {"what":["風","雨"],"day":"日付","date":"10/11","part":"一日","where":"札幌"}',
+].join("\n");
+let PLACES = null;
+async function places() {
+  if (PLACES) return PLACES;
+  try { const j = await (await fetch("data/map/places_jp.json")).json(); PLACES = j.rows.map(([ja, kana, lat, lon]) => ({ name: ja, keys: [ja, ja.replace(/[市都]$|（.*）/g, ""), kana].filter(Boolean), lat, lon })); }
+  catch (_) { PLACES = []; }
+  return PLACES;
+}
+function findPlace(text, P) {
+  if (!text) return null; let best = null;
+  for (const p of P) for (const k of p.keys) if (k.length >= 2 && text.includes(k) && (!best || k.length > best.k.length)) best = { p, k };
+  return best?.p || null;
+}
+/* AIなしの伝票係：言葉を拾うだけ（比べるための相手） */
+function ruleOrder(text, P) {
+  const what = WHAT.filter(w => ({ 気圧: /気圧|hPa|ヘクトパスカル/, 風: /風/, 雨: /雨|降/ })[w].test(text));
+  let day = "最近", date = "", m;
+  if ((window.LAB?.FUTURE || []).some(w => text.includes(w))) day = "未来";
+  else if ((m = text.match(/(\d{1,2})\s*[\/月]\s*(\d{1,2})/))) { day = "日付"; date = `${+m[1]}/${+m[2]}`; }
+  else if (/おととい|一昨日/.test(text)) day = "おととい";
+  else if (/昨日|きのう/.test(text)) day = "昨日";
+  else if (/今日|きょう/.test(text)) day = "今日";
+  else if (/先週|1週間前|一週間前/.test(text)) day = "1週間前";
+  else if ((m = text.match(/([3-6三四五六])日前/))) day = `${{ 三: 3, 四: 4, 五: 5, 六: 6 }[m[1]] || m[1]}日前`;
+  const part = /深夜|夜中|未明/.test(text) ? "深夜" : /夕方/.test(text) ? "夕方" : /夜|晩/.test(text) ? "夜" : /朝|午前/.test(text) ? "朝" : /昼|日中|午後/.test(text) ? "昼" : "一日";
+  const pl = findPlace(text, P);
+  return { what: what.length ? what : WHAT.slice(), day, date, part, where: pl ? pl.keys[1] || pl.name : "" };
+}
+async function aiOrder(text) {
+  const msgs = [{ role: "system", content: WSYS }, { role: "user", content: text }];
+  let r, raw = "";
+  try { r = await engine.chat.completions.create({ messages: msgs, temperature: 0, max_tokens: 120, response_format: { type: "json_object", schema: JSON.stringify(ORDER_SCHEMA) } }); }
+  catch (_) { r = await engine.chat.completions.create({ messages: msgs, temperature: 0, max_tokens: 120 }); }   /* 枠つきが使えない版のとき */
+  raw = (r.choices?.[0]?.message?.content || "").trim();
+  const j = raw.match(/\{[\s\S]*\}/); let o = null;
+  try { o = JSON.parse(j ? j[0] : raw); } catch (_) {}
+  if (!o) return { bad: true, raw };
+  /* コードの点検：メニューにない品は落とす */
+  const what = (Array.isArray(o.what) ? o.what : []).filter(w => WHAT.includes(w));
+  return { what: what.length ? what : WHAT.slice(), day: DAYS.includes(o.day) ? o.day : "最近", date: String(o.date || ""), part: PARTS.includes(o.part) ? o.part : "一日", where: String(o.where || ""), raw };
+}
+/* 伝票 → 時間の範囲（日本時間）。計算はコード */
+const HOURS = { 一日: [0, 24], 深夜: [0, 5], 朝: [5, 11], 昼: [11, 17], 夕方: [15, 20], 夜: [18, 24] };
+function range(o) {
+  const now = new Date(), jst = new Date(now.getTime() + 9 * 3600000), y = jst.getUTCFullYear();
+  const midnight = (yy, mm, dd) => Date.UTC(yy, mm, dd) - 9 * 3600000;
+  if (o.day === "最近") return { t0: now - 3 * 86400000, t1: +now, label: "この3日" };
+  let d0;
+  if (o.day === "日付") { const m = o.date.match(/(\d{1,2})\D+(\d{1,2})/); if (!m) return null; d0 = midnight(y, +m[1] - 1, +m[2]); if (d0 > now) d0 = midnight(y - 1, +m[1] - 1, +m[2]); }
+  else { const back = { 今日: 0, 昨日: 1, おととい: 2, "3日前": 3, "4日前": 4, "5日前": 5, "6日前": 6, "1週間前": 7 }[o.day]; if (back == null) return null; d0 = midnight(y, jst.getUTCMonth(), jst.getUTCDate() - back); }
+  const [h0, h1] = HOURS[o.part] || HOURS.一日;
+  return { t0: d0 + h0 * 3600000, t1: d0 + h1 * 3600000, label: `${new Date(d0 + 9 * 3600000).getUTCMonth() + 1}/${new Date(d0 + 9 * 3600000).getUTCDate()} ${o.part}` };
+}
+const chip = (k, v) => `<span style="display:inline-block;border:1px solid var(--tile-edge);border-radius:8px;padding:3px 9px;margin:2px 4px 2px 0;font-size:14px"><span style="color:var(--ink-faint);font-size:12px">${k}</span> ${esc(v)}</span>`;
+async function serve(o, who, sec) {
+  const L = window.LAB, P = await places(), out = $("wOut");
+  if (o.bad) { out.innerHTML = `<p class="verdict"><b class="ng">伝票が読めませんでした</b>（${who}）。もう一度、言い方を変えて頼んでみてください。</p><details><summary>AIが書いたもの</summary><pre class="note">${esc(o.raw)}</pre></details>`; return; }
+  const pl = o.where ? findPlace(o.where, P) : null, place = pl ? { name: pl.name, lat: pl.lat, lon: pl.lon } : L.place();
+  const ticket = `<div style="margin:6px 0">${chip("書いた人", who + (sec != null ? `・${sec.toFixed(1)}秒` : ""))}${chip("何", o.what.join("・"))}${chip("いつ", o.day === "日付" ? o.date : o.day)}${chip("時間帯", o.part)}${chip("どこ", place.name + (o.where && !pl ? `（「${o.where}」は見つからず）` : ""))}</div>`;
+  if (o.day === "未来") { out.innerHTML = ticket + `<p class="verdict"><b class="mid">この先のことはメニューにありません</b>。ここは過去の記録だけを運びます。この先の天気は <a href="https://www.jma.go.jp/bosai/forecast/" target="_blank" rel="noopener">気象庁の天気予報</a> へ。</p>`; return; }
+  const rg = range(o); if (!rg) { out.innerHTML = ticket + `<p class="verdict"><b class="ng">日付が読めませんでした</b>。</p>`; return; }
+  out.innerHTML = ticket + '<p class="note">記録庫から運んでいます…</p>';
+  const rows = await L.rows(place, rg.t0, rg.t1), ix = L.index();
+  if (!rows.length) { const first = ix?.sets?.[0]; out.innerHTML = ticket + `<p class="verdict"><b class="mid">その時間の記録はありません</b>（${esc(rg.label)}）。${first ? `記録庫は ${L.F.format(new Date(first.validTime))} からです。` : ""}記録は6時間ごと（日本時間の0・6・12・18時ごろ）なので、時間帯がせまいと入らないことがあります。</p>`; return; }
+  const cols = [], C = o.what;
+  if (C.includes("気圧")) cols.push(["気圧 hPa", r => r.p == null ? "—" : r.p.toFixed(1)]);
+  if (C.includes("風")) cols.push(["風 m/s", r => r.spd == null ? "—" : L.DIRS[Math.round(r.from / 22.5) % 16] + " " + r.spd.toFixed(1)]);
+  if (C.includes("雨")) cols.push(["雨", r => L.rainWord(r.rain)]);
+  const charts = (C.includes("気圧") ? L.chart(rows, "p", "気圧", "hPa", "#8fe3d4", 1) : "") + (C.includes("風") ? L.chart(rows, "spd", "風の速さ", "m/s", "#c9a7ff", 1) : "") + (C.includes("雨") ? L.chart(rows, "rain", "雨の強さ", "mm/時", "#7fb4ff", 1) : "");
+  out.innerHTML = ticket + `<p class="verdict"><b class="ok">お持ちしました</b>：${esc(place.name)}・${esc(rg.label)}・${rows.length} 回分（運んだのはコード。値は記録庫そのまま）</p>`
+    + `<div class="tblbox"><table class="tbl"><tr><th>時刻（日本時間）</th>${cols.map(c => `<th>${c[0]}</th>`).join("")}</tr>${rows.map(r => `<tr><td>${L.F.format(r.t)}</td>${cols.map(c => `<td>${c[1](r)}</td>`).join("")}</tr>`).join("")}</table></div>` + charts;
+}
+async function wGo(useAi) {
+  const text = $("wIn").value.trim(); if (!text) return;
+  const P = await places();
+  if (!useAi) return serve(ruleOrder(text, P), "AIなし");
+  if (!engine) return;
+  setBusy(true); $("wOut").innerHTML = '<p class="note">AIが伝票を書いています…</p>'; const t0 = performance.now();
+  try { const o = await aiOrder(text); await serve(o, "AI（" + curId.split("-").slice(0, 2).join(" ") + "）", (performance.now() - t0) / 1000); }
+  catch (e) { $("wOut").innerHTML = `<p class="verdict"><b class="ng">止まりました</b>：${esc(e?.message || e)}</p>`; }
+  finally { setBusy(false); }
+}
+/* 試しの言い方（正解の伝票つき）。AIなし と AI で、合っていた数を数える */
+const TESTS = [
+  ["おとといの夜の京都の気圧", { what: ["気圧"], day: "おととい", part: "夜", where: "京都" }],
+  ["昨日の札幌の風", { what: ["風"], day: "昨日", part: "一日", where: "札幌" }],
+  ["今日の朝、雨降ってた？", { what: ["雨"], day: "今日", part: "朝", where: "" }],
+  ["10月11日の那覇の風と雨", { what: ["風", "雨"], day: "日付", date: "10/11", part: "一日", where: "那覇" }],
+  ["明日の京都の天気", { day: "未来" }],
+  ["最近の気圧を見せて", { what: ["気圧"], day: "最近", part: "一日", where: "" }],
+  ["きのうの夕方って風強かった？", { what: ["風"], day: "昨日", part: "夕方", where: "" }],
+  ["3日前の大阪", { what: WHAT, day: "3日前", part: "一日", where: "大阪" }],
+  ["10/9 の東京の気圧と風", { what: ["気圧", "風"], day: "日付", date: "10/9", part: "一日", where: "東京" }],
+  ["来週の福岡の雨", { day: "未来" }],
+  ["一昨日の深夜の舞鶴の風", { what: ["風"], day: "おととい", part: "深夜", where: "舞鶴" }],
+  ["昨日の昼の名古屋の雨と気圧", { what: ["気圧", "雨"], day: "昨日", part: "昼", where: "名古屋" }],
+  ["今日の仙台", { what: WHAT, day: "今日", part: "一日", where: "仙台" }],
+  ["この前の土曜の雨すごかった日の京都", { what: ["雨"], day: "日付?", part: "一日", where: "京都" }],
+  ["きのうの晩の神戸の風", { what: ["風"], day: "昨日", part: "夜", where: "神戸" }],
+  ["10月10日朝の広島の気圧", { what: ["気圧"], day: "日付", date: "10/10", part: "朝", where: "広島" }],
+  ["今夜の大阪の風", { day: "未来" }],
+  ["おとといの金沢の気圧", { what: ["気圧"], day: "おととい", part: "一日", where: "金沢" }],
+  ["昨日の朝の気圧と風と雨", { what: WHAT, day: "昨日", part: "朝", where: "" }],
+  ["鹿児島の最近の風", { what: ["風"], day: "最近", part: "一日", where: "鹿児島" }],
+  /* ここから下は、AIなしの係が知らない言い方（ルミが係を作ったあとに足した。比べどころ） */
+  ["ゆうべの京都の風", { what: ["風"], day: "昨日", part: "夜", where: "京都" }],
+  ["きょうの明け方の東京の気圧", { what: ["気圧"], day: "今日", part: "深夜", where: "東京" }],
+  ["なごやって昨日しけてた？", { what: ["風", "雨"], day: "昨日", part: "一日", where: "名古屋" }],
+];
+function score(o, want, P) {
+  if (o.bad) return { ok: false, why: "読めない" };
+  const miss = [];
+  if (want.day === "未来") return o.day === "未来" ? { ok: true } : { ok: false, why: `いつ：${o.day}` };
+  if (want.day === "日付?") { /* 正解が決まらない言い方。「未来」にしなければ可（どう書いたかを見る） */ }
+  else if (o.day !== want.day) miss.push(`いつ：${o.day}`);
+  if (want.date && (o.date.match(/\d+/g) || []).map(Number).join("/") !== want.date) miss.push(`日付：${o.date || "空"}`);
+  if (o.part !== want.part) miss.push(`時間帯：${o.part}`);
+  if ([...o.what].sort().join() !== [...want.what].sort().join()) miss.push(`何：${o.what.join("・")}`);
+  const gp = want.where ? findPlace(want.where, P) : null, op = o.where ? findPlace(o.where, P) : null;
+  if ((gp?.name || "") !== (op?.name || "")) miss.push(`どこ：${o.where || "空"}`);
+  return { ok: !miss.length, why: miss.join("、") };
+}
+async function wTest(useAi) {
+  const P = await places(), out = $("wOut"); if (useAi && !engine) return;
+  setBusy(true); let okN = 0; const lines = [];
+  try {
+    for (let i = 0; i < TESTS.length; i++) {
+      const [text, want] = TESTS[i];
+      out.innerHTML = `<p class="note">${useAi ? "AI" : "AIなし"}で試しています… ${i + 1}/${TESTS.length}</p>`;
+      const o = useAi ? await aiOrder(text) : ruleOrder(text, P), s = score(o, want, P);
+      if (s.ok) okN++;
+      lines.push(`<tr><td style="text-align:left;white-space:normal">${esc(text)}</td><td>${s.ok ? '<b class="ok">○</b>' : '<b class="ng">×</b>'}</td><td style="text-align:left;white-space:normal;color:var(--ink-soft)">${esc(s.why || "")}${want.day === "日付?" ? `（→ ${esc(o.day)}${o.date ? " " + esc(o.date) : ""}）` : ""}</td></tr>`);
+    }
+    const who = useAi ? "AI（" + curId + "）" : "AIなし";
+    const st = (stats.waiter ||= {}); st[who] = `${okN}/${TESTS.length}`; saveStats();
+    out.innerHTML = `<p class="verdict"><b>${esc(who)}</b>：伝票が合っていたのは <b>${okN} / ${TESTS.length}</b></p><div class="tblbox" style="max-height:420px"><table class="tbl"><tr><th>言い方</th><th>合否</th><th>ちがったところ</th></tr>${lines.join("")}</table></div>`;
+    showWStats();
+  } catch (e) { out.innerHTML = `<p class="verdict"><b class="ng">止まりました</b>：${esc(e?.message || e)}</p>`; }
+  finally { setBusy(false); }
+}
+window.__waiter = { ruleOrder, score, range, findPlace, TESTS, places: () => places() };   /* 実験室の点検用 */
+function showWStats() { const el = $("wStats"); if (!el) return; const w = stats.waiter || {}; el.textContent = Object.keys(w).length ? "これまでの成績（この端末）：" + Object.entries(w).map(([k, v]) => `${k} ${v}`).join("／") : ""; }
+function mountWaiter() {
+  const host = $("waiterCard"); if (!host) return;
+  host.innerHTML = `
+  <h2><span class="no">06</span>データのウエイター（AIは伝票を書くだけ）</h2>
+  <p class="what">「いつの・どこの・何を持ってきて」と頼むと、AIが<b>伝票</b>（何・いつ・時間帯・どこ）を書きます。記録庫から値を運んで表とグラフにするのはコードです。伝票はそのまま見せるので、まちがえたら「ちがう料理が来た」と分かります。日付の計算・場所さがし・この先のことの断りもコードがします。AIは 05 で読み込んだものを使います（AIなしでも試せます）。</p>
+  <textarea id="wIn" style="min-height:56px" placeholder="例：おとといの夜の京都の気圧">おとといの夜の京都の気圧</textarea>
+  <div class="ctrl" style="margin-top:8px"><button type="button" id="wAi" disabled>AIに頼む</button><button type="button" id="wRule">AIなしで頼む</button></div>
+  <div id="wOut"></div>
+  <div class="ctrl" style="margin-top:10px"><span class="note">試しの言い方 ${TESTS.length} 個を一気に流す：</span><button type="button" id="wTestAi" disabled>AIで</button><button type="button" id="wTestRule">AIなしで</button></div>
+  <p class="note" id="wStats"></p>
+  <p class="note">記録は6時間ごと・場所は日本の主な地点だけ（地名が見つからない時は、ダッシュボードで選んでいる場所）。「この前の土曜の雨すごかった日」のような言い方は正解が1つに決まらないので、どう書いたかを見るためのものです。</p>`;
+  $("wAi").onclick = () => wGo(true); $("wRule").onclick = () => wGo(false); $("wTestAi").onclick = () => wTest(true); $("wTestRule").onclick = () => wTest(false);
+  showWStats();
 }
 async function mount() {
   const host = $("aiCard"); if (!host) return;
@@ -132,7 +304,7 @@ async function mount() {
   <p class="note">この端末での記録（端末の中だけ）</p><div class="kv" id="aiStats"></div>
   <p class="note">軽い席は海外製、少し上の席は日本製（Sakana AI の TinySwallow。有志がブラウザ用に変換したもの）。どちらも試しです。AIはまちがえることがあります。</p>`;
   $("aiLight").onclick = () => load("light"); $("aiJp").onclick = () => load("jp"); $("aiRun").onclick = run; $("aiDel").onclick = del;
-  showStats();
+  showStats(); mountWaiter();
 }
 if (document.readyState === "loading") addEventListener("DOMContentLoaded", mount); else mount();
 })();
