@@ -53,7 +53,7 @@ async function load(key, auto = false) {
     engine = await webllm.CreateMLCEngine(m.id, { appConfig: m.appConfig, initProgressCallback: p => { log(`読み込み中：${Math.round((p.progress || 0) * 100)}%　${p.text || ""}`); const b = $("aiBar"); if (b) b.style.width = `${Math.round((p.progress || 0) * 100)}%`; } });
     curId = m.id; try { localStorage.setItem("lab.ai.seat", key); } catch (_) {} const sec = (performance.now() - t0) / 1000;
     (stats[m.id] ||= { loads: 0, runs: 0, passed: 0, blocked: 0 }).loads++; stats[m.id].loadSec = sec; saveStats();
-    log(`読み込み完了：${m.id}（${sec.toFixed(0)} 秒）。「ふりかえりを書かせる」を押してください。`);
+    log(`読み込み完了：${m.id}（${sec.toFixed(0)} 秒）。「AIに並べてもらう」か、06番の「AIに頼む」を押してください。`);
   } catch (e) { log(`読み込めませんでした（${SEATS[key].label}）：` + (e?.message || e) + "　→ どこで止まったか調べています…"); await probe(m0(), `（${SEATS[key].label}）` + String(e?.message || e)); }
   finally { setBusy(false); showStats(); }
 }
@@ -73,7 +73,7 @@ async function probe(m, msg) {
   log(`読み込めませんでした：${msg}\n調べた結果 → ${out.join("／")}\n保存のしかた：${useIDB() ? "IndexedDB" : "Cache"}`);
 }
 const useIDB = () => !!$("aiIDB")?.checked;
-function setBusy(b) { for (const id of ["aiLight", "aiJp"]) { const el = $(id); if (el) el.disabled = b; } for (const id of ["aiRun", "aiDel", "wAi", "wTestAi"]) { const el = $(id); if (el) el.disabled = b || !engine; } }
+function setBusy(b) { for (const id of ["aiLight", "aiJp"]) { const el = $(id); if (el) el.disabled = b; } for (const id of ["aiRun", "aiFree", "aiDel", "wAi", "wTestAi"]) { const el = $(id); if (el) el.disabled = b || !engine; } }
 
 /* 数字の照合：AIの文に出てくる数字が、渡した事実の中にあるか */
 function numbersOk(out, facts) {
@@ -113,6 +113,80 @@ async function del() {
 function showStats() {
   const el = $("aiStats"); if (!el) return; const rows = Object.entries(stats).filter(([k]) => k !== "waiter");
   el.innerHTML = rows.length ? rows.map(([id, s]) => `<span>${esc(id)}</span><span>読み込み ${s.loads}回（最後 ${Math.round(s.loadSec || 0)}秒）・書かせた ${s.runs}回・通過 ${s.passed}・止めた ${s.blocked}${s.tps ? `・1秒に約${s.tps.toFixed(1)}トークン` : ""}</span>`).join("") : "<span>まだ記録はありません</span><span></span>";
+}
+
+
+/* ===== 05 項目別ならべ：行を作るのはコード。AIは「聞かれたこと」を読んで、出す順番と最後の問いを選ぶだけ ===== */
+const ITEMS = ["気圧", "風", "雨"];
+const QS = [
+  { id: "q1", item: "気圧", text: "気圧がいちばん低かった時、地球儀の雲はどんな形をしていた？" },
+  { id: "q2", item: "気圧", text: "気圧がいちばん大きく動いた6時間の前と後で、風の向きは変わっていた？" },
+  { id: "q3", item: "風", text: "風がいちばん強かった時、気圧は高かった？低かった？" },
+  { id: "q4", item: "風", text: "風の向きが変わった時、何かが近くを通りすぎていた？" },
+  { id: "q5", item: "雨", text: "雨が出ていた回は、気圧が低い時と重なっていた？" },
+  { id: "q6", item: "", text: "この期間で、いちばん気になった数字はどれ？" },
+];
+const T = t => window.LAB.F.format(t);
+const kmh = v => Math.round(v * 3.6);
+function itemLines(rows) {
+  const L = window.LAB, out = {}, P = rows.filter(r => r.p != null), W = rows.filter(r => r.spd != null);
+  if (P.length) { const lo = P.reduce((a, b) => b.p < a.p ? b : a), hi = P.reduce((a, b) => b.p > a.p ? b : a), d = hi.p - lo.p;
+    const ln = [`低い ${lo.p.toFixed(1)} hPa（${T(lo.t)}）／高い ${hi.p.toFixed(1)} hPa（${T(hi.t)}）`, `差 ${d.toFixed(1)} hPa（ものさし：高さ約${Math.round(d * 8.3)}mぶんの気圧の差。エレベーターで約${Math.max(1, Math.round(d * 8.3 / 3))}階ぶん）`];
+    let best = null; for (let i = 1; i < P.length; i++) { const h = (P[i].t - P[i - 1].t) / 3600000; if (h > 0 && h <= 6.5) { const x = P[i].p - P[i - 1].p; if (!best || Math.abs(x) > Math.abs(best.x)) best = { x, a: P[i - 1], b: P[i] }; } }
+    if (best && Math.abs(best.x) >= 1) ln.push(`いちばん大きく${best.x < 0 ? "下がった" : "上がった"}6時間：${best.x >= 0 ? "+" : ""}${best.x.toFixed(1)} hPa（${T(best.a.t)}〜${T(best.b.t)}）`);
+    out["気圧"] = ln; }
+  if (W.length) { const mx = W.reduce((a, b) => b.spd > a.spd ? b : a), ln = [`いちばん強い：${L.DIRS[Math.round(mx.from / 22.5) % 16]}の風 ${mx.spd.toFixed(1)} m/s（${T(mx.t)}）＝ 時速約${kmh(mx.spd)}km`];
+    let turn = null; for (let i = 1; i < W.length; i++) { let d = Math.abs(W[i].from - W[i - 1].from); d = Math.min(d, 360 - d); if (W[i].spd > 2 && W[i - 1].spd > 2 && (!turn || d > turn.d)) turn = { d, a: W[i - 1], b: W[i] }; }
+    if (turn && turn.d >= 60) ln.push(`向きが大きく変わった：${L.DIRS[Math.round(turn.a.from / 22.5) % 16]} → ${L.DIRS[Math.round(turn.b.from / 22.5) % 16]}（${T(turn.a.t)}〜${T(turn.b.t)}）`);
+    out["風"] = ln; }
+  const Rr = rows.filter(r => r.rain != null), wet = Rr.filter(r => r.rain >= 0.1);
+  if (Rr.length) out["雨"] = wet.length ? [`雨が出ていた記録：${Rr.length}回中${wet.length}回（6時間ごとの記録。ずっと降っていたとは限らない）`, `いちばん強かった：${T(wet.reduce((a, b) => b.rain > a.rain ? b : a).t)}（${L.rainWord(wet.reduce((a, b) => b.rain > a.rain ? b : a).rain)}）`] : [`雨が出ていた記録：${Rr.length}回中0回`];
+  return out;
+}
+function ruleArrange(ask) {
+  const order = []; const add = k => { if (!order.includes(k)) order.push(k); };
+  if (/荒れ|しけ|嵐|台風/.test(ask)) { add("風"); add("雨"); }
+  if (/気圧|hPa|頭痛/.test(ask)) add("気圧");
+  if (/風/.test(ask)) add("風");
+  if (/雨|降/.test(ask)) add("雨");
+  if (!order.length) ITEMS.forEach(add);
+  const q = QS.find(x => x.item === order[0]) || QS[QS.length - 1];
+  return { order, q: q.id };
+}
+const ARR_SCHEMA = { type: "object", properties: { order: { type: "array", items: { type: "string", enum: ITEMS } }, q: { type: "string", enum: QS.map(x => x.id) } }, required: ["order", "q"] };
+async function aiArrange(ask) {
+  const sys = ["あなたは並べ係です。お客さんの「聞きたいこと」を読んで、見せる項目の順番と、最後に添える問いを選ぶだけが仕事です。文章は書きません。JSONだけを返します。",
+    `order：${ITEMS.join("・")} から、聞きたいことに近い順に並べる（関係ないものは入れなくてよい）`,
+    "q：次の問いから1つ選んで id を書く", ...QS.map(x => `${x.id}：${x.text}`),
+    '例：「昨日荒れてた？」→ {"order":["風","雨"],"q":"q3"}'].join("\n");
+  const msgs = [{ role: "system", content: sys }, { role: "user", content: ask }];
+  let r; try { r = await engine.chat.completions.create({ messages: msgs, temperature: 0, max_tokens: 60, response_format: { type: "json_object", schema: JSON.stringify(ARR_SCHEMA) } }); }
+  catch (_) { r = await engine.chat.completions.create({ messages: msgs, temperature: 0, max_tokens: 60 }); }
+  const raw = (r.choices?.[0]?.message?.content || "").trim(), m = raw.match(/\{[\s\S]*\}/); let o = null; try { o = JSON.parse(m ? m[0] : raw); } catch (_) {}
+  if (!o) return { bad: true, raw };
+  const order = [...new Set((Array.isArray(o.order) ? o.order : []).filter(k => ITEMS.includes(k)))];
+  return { order, q: QS.some(x => x.id === o.q) ? o.q : null, raw };
+}
+function showArranged(a, who, sec) {
+  const rows = window.LAB.rowsNow(), lines = itemLines(rows), out = $("aiOut");
+  if (rows.length < 2) { out.innerHTML = '<p class="note">記録がまだ少なすぎます（2回分以上たまると並べられます）。</p>'; return; }
+  if (a.bad) { out.innerHTML = `<p class="verdict"><b class="ng">並べ方が読めませんでした</b>（${esc(who)}）。</p><details><summary>AIが書いたもの</summary><pre class="note">${esc(a.raw)}</pre></details>`; return; }
+  const rest = ITEMS.filter(k => !a.order.includes(k) && lines[k]), q = QS.find(x => x.id === a.q);
+  const block = (k, dim) => lines[k] ? `<div style="margin:8px 0;${dim ? "opacity:.5" : ""}"><b style="display:inline-block;min-width:3.2em;color:var(--lab)">【${k}】</b>${lines[k].map((l, i) => `<div style="padding-left:3.4em;${i ? "font-size:13.5px;color:var(--ink-soft)" : ""}">${esc(l)}</div>`).join("")}</div>` : "";
+  out.innerHTML = `<div style="margin:6px 0">${chip("並べた人", who + (sec != null ? `・${sec.toFixed(1)}秒` : ""))}${chip("順番", a.order.join(" → ") || "（なし）")}${chip("問い", a.q || "なし")}</div>`
+    + `<div class="aiText" style="font-size:14.5px">📅 ${esc(T(rows[0].t))}〜${esc(T(rows[rows.length - 1].t))}（${rows.length}回分）`
+    + a.order.map(k => block(k, false)).join("") + (rest.length ? `<div class="note" style="margin-top:6px">聞かれていない項目</div>` + rest.map(k => block(k, true)).join("") : "")
+    + (q ? `<div style="margin-top:10px">❓ ${esc(q.text)}</div>` : "") + `</div>`
+    + `<p class="note">行の文と数字はコードが作りました（AIは順番と問いを選んだだけ）。</p>`;
+}
+async function arrange(useAi) {
+  const ask = ($("aiAsk")?.value || "").trim() || "この期間、どうだった？";
+  if (!useAi) return showArranged(ruleArrange(ask), "AIなし");
+  if (!engine) return;
+  setBusy(true); $("aiOut").innerHTML = '<p class="note">AIが並べ方を選んでいます…</p>'; const t0 = performance.now();
+  try { const a = await aiArrange(ask), st = stats[curId] ||= { loads: 0, runs: 0, passed: 0, blocked: 0 }; st.arranged = (st.arranged || 0) + 1; saveStats(); showArranged(a, "AI（" + curId.split("-").slice(0, 2).join(" ") + "）", (performance.now() - t0) / 1000); }
+  catch (e) { $("aiOut").innerHTML = ""; log("並べられませんでした：" + (e?.message || e)); }
+  finally { setBusy(false); }
 }
 
 /* ===== 06 データのウエイター =====
@@ -300,8 +374,8 @@ async function mount() {
   const host = $("aiCard"); if (!host) return;
   const rec = isPhone() ? "light" : "jp";
   host.innerHTML = `
-  <h2><span class="no">05</span>ローカルAIに書かせてみる（試し）</h2>
-  <p class="what">② の事実だけをAIに渡して、ふりかえりの文を書かせます。AIの文は ③ の見張りと「数字の照合」を通ってから出ます。押した人だけ、モデルを Hugging Face（AIモデルの置き場）から読み込みます。読み込んだモデルは端末の中に残り、下のボタンで消せます。</p>
+  <h2><span class="no">05</span>ローカルAIでふりかえる（試し）</h2>
+  <p class="what">気圧・風・雨の行は<b>コードが作ります</b>（数字と日時はまちがえない）。AIは「聞きたいこと」を読んで、<b>どの項目をどの順で出すか</b>と、最後の問いを選ぶだけです。押した人だけ、モデルを Hugging Face（AIモデルの置き場）から読み込みます。読み込んだモデルは端末の中に残り、下のボタンで消せます。</p>
   <div class="ctrl">
     <button type="button" id="aiLight">${esc(SEATS.light.label)}・${SEATS.light.size}${rec === "light" ? "　★この端末のおすすめ" : ""}</button>
     <button type="button" id="aiJp">${esc(SEATS.jp.label)}・${SEATS.jp.size}${rec === "jp" ? "　★この端末のおすすめ" : ""}</button>
@@ -310,11 +384,12 @@ async function mount() {
   <label class="note" style="display:block;margin:2px 0 2px"><input type="checkbox" id="aiAuto" checked> 開いた時、前に使った席を自動で読み込む（端末の中にある時だけ。通信なし）</label>
   <label class="note" style="display:block;margin:2px 0 6px"><input type="checkbox" id="aiIDB"> 保存のしかたを変える（IndexedDB。読み込めないときの試し）</label>
   <p class="note" id="aiLog" style="white-space:pre-wrap">${"gpu" in navigator ? "席を選ぶと読み込みが始まります。" : "この端末のブラウザには WebGPU がないので、AIは動かせません。"}</p>
-  <div class="ctrl"><button type="button" id="aiRun" disabled>ふりかえりを書かせる</button><button type="button" id="aiDel" disabled>読み込んだモデルを消す</button></div>
+  <textarea id="aiAsk" style="min-height:48px" placeholder="聞きたいこと（例：昨日荒れてた？）">この3日、どうだった？</textarea>
+  <div class="ctrl" style="margin-top:8px"><button type="button" id="aiRun" disabled>AIに並べてもらう</button><button type="button" id="aiRule">AIなしで並べる</button><button type="button" id="aiFree" disabled>自由に書かせる（比べる用）</button><button type="button" id="aiDel" disabled>読み込んだモデルを消す</button></div>
   <div id="aiOut"></div>
   <p class="note">この端末での記録（端末の中だけ）</p><div class="kv" id="aiStats"></div>
   <p class="note">軽い席は海外製、少し上の席は日本製（Sakana AI の TinySwallow。有志がブラウザ用に変換したもの）。どちらも試しです。AIはまちがえることがあります。</p>`;
-  $("aiLight").onclick = () => load("light"); $("aiJp").onclick = () => load("jp"); $("aiRun").onclick = run; $("aiDel").onclick = del;
+  $("aiLight").onclick = () => load("light"); $("aiJp").onclick = () => load("jp"); $("aiRun").onclick = () => arrange(true); $("aiRule").onclick = () => arrange(false); $("aiFree").onclick = run; $("aiDel").onclick = del;
   showStats(); mountWaiter(); autoLoad();
 }
 /* 前に読み込めた席が端末の中に残っていれば、開いた時に自動で読み込む（通信なし。置き場へは行かない） */
