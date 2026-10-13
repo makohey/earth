@@ -192,14 +192,14 @@ async function arrange(useAi) {
 /* ===== 06 データのウエイター =====
    AIの仕事は「注文を聞いて伝票に書く」だけ。料理（値・表・グラフ）を運ぶのはコード。
    伝票はそのまま見せるので、まちがえたら「ちがう料理が来た」と分かる。日付の計算・未来の断り・場所さがしはコード */
-const WHAT = ["気圧", "風", "雨", "波"], OFF = "メニューにない", OFFRE = /気温|温度|最高気温|最低気温|暑|寒|湿度|雪|雷|霧|紫外線|花粉/, DAYS = ["今日", "昨日", "おととい", "3日前", "4日前", "5日前", "6日前", "1週間前", "日付", "最近", "未来"], PARTS = ["一日", "深夜", "朝", "昼", "夕方", "夜"];
+const WHAT = ["気圧", "風", "雨", "波", "地震"], OFF = "メニューにない", OFFRE = /気温|温度|最高気温|最低気温|暑|寒|湿度|雪|雷|霧|紫外線|花粉/, DAYS = ["今日", "昨日", "おととい", "3日前", "4日前", "5日前", "6日前", "1週間前", "日付", "最近", "未来"], PARTS = ["一日", "深夜", "朝", "昼", "夕方", "夜"];
 const ORDER_SCHEMA = { type: "object", properties: {
   what: { type: "array", items: { type: "string", enum: [...WHAT, OFF] } }, day: { type: "string", enum: DAYS },
   date: { type: "string" }, part: { type: "string", enum: PARTS }, where: { type: "string" } }, required: ["what", "day", "part", "where"] };
 const WSYS = [
   "あなたはデータのウエイターです。お客さんの言葉を、注文の伝票（JSON）に書き直すだけが仕事です。答えや説明は書きません。",
   `what：${WHAT.join("・")} から選ぶ（言われていなければ全部）。気温・湿度・雪など、これらにないものを頼まれたら「${OFF}」を入れる（似たものに置きかえない）`,
-  `day：${DAYS.join("・")} から選ぶ。「10月11日」「10/11」のように日付で言われたら「日付」にして date に「10/11」の形で書く。明日・来週などこの先のことは「未来」。言われていなければ「最近」`,
+  `day：${DAYS.join("・")} から選ぶ。「10月11日」「10/11」のように日付で言われたら「日付」にして date に「10/11」の形で書く（年も言われたら「1995/1/17」の形）。明日・来週などこの先のことは「未来」。言われていなければ「最近」`,
   `part：${PARTS.join("・")} から選ぶ（言われていなければ「一日」）`,
   "where：言われた地名をそのまま書く。言われていなければ空の文字",
   '例：「おとといの夜の京都の気圧」→ {"what":["気圧"],"day":"おととい","date":"","part":"夜","where":"京都"}',
@@ -219,9 +219,10 @@ function findPlace(text, P) {
 }
 /* AIなしの伝票係：言葉を拾うだけ（比べるための相手） */
 function ruleOrder(text, P) {
-  const what = WHAT.filter(w => ({ 気圧: /気圧|hPa|ヘクトパスカル/, 風: /風/, 雨: /雨|降/, 波: /波|うねり/ })[w].test(text));
+  const what = WHAT.filter(w => ({ 気圧: /気圧|hPa|ヘクトパスカル/, 風: /風/, 雨: /雨|降/, 波: /波|うねり/, 地震: /地震|揺れ|ゆれ|震源/ })[w].test(text));
   let day = "最近", date = "", m;
   if ((window.LAB?.FUTURE || []).some(w => text.includes(w))) day = "未来";
+  else if ((m = text.match(/(\d{4})\s*[\/年]\s*(\d{1,2})\s*[\/月]\s*(\d{1,2})/))) { day = "日付"; date = `${+m[1]}/${+m[2]}/${+m[3]}`; }
   else if ((m = text.match(/(\d{1,2})\s*[\/月]\s*(\d{1,2})/))) { day = "日付"; date = `${+m[1]}/${+m[2]}`; }
   else if (/おととい|一昨日/.test(text)) day = "おととい";
   else if (/昨日|きのう/.test(text)) day = "昨日";
@@ -253,11 +254,30 @@ function range(o) {
   const midnight = (yy, mm, dd) => Date.UTC(yy, mm, dd) - 9 * 3600000;
   if (o.day === "最近") return { t0: now - 3 * 86400000, t1: +now, label: "この3日" };
   let d0;
-  if (o.day === "日付") { const m = o.date.match(/(\d{1,2})\D+(\d{1,2})/); if (!m) return null; d0 = midnight(y, +m[1] - 1, +m[2]); if (d0 > now) d0 = midnight(y - 1, +m[1] - 1, +m[2]); }
+  if (o.day === "日付") { const n = (o.date.match(/\d+/g) || []).map(Number); if (n.length < 2) return null;
+    if (n.length >= 3 && n[0] > 31) d0 = midnight(n[0], n[1] - 1, n[2]); else { d0 = midnight(y, n[0] - 1, n[1]); if (d0 > now) d0 = midnight(y - 1, n[0] - 1, n[1]); } }
   else { const back = { 今日: 0, 昨日: 1, おととい: 2, "3日前": 3, "4日前": 4, "5日前": 5, "6日前": 6, "1週間前": 7 }[o.day]; if (back == null) return null; d0 = midnight(y, jst.getUTCMonth(), jst.getUTCDate() - back); }
   const [h0, h1] = HOURS[o.part] || HOURS.一日;
-  return { t0: d0 + h0 * 3600000, t1: d0 + h1 * 3600000, label: `${new Date(d0 + 9 * 3600000).getUTCMonth() + 1}/${new Date(d0 + 9 * 3600000).getUTCDate()} ${o.part}` };
+  return { t0: d0 + h0 * 3600000, t1: d0 + h1 * 3600000, label: (() => { const j = new Date(d0 + 9 * 3600000); return `${j.getUTCFullYear() !== y ? j.getUTCFullYear() + "/" : ""}${j.getUTCMonth() + 1}/${j.getUTCDate()} ${o.part}`; })() };
 }
+/* 地震：自分のページに置いた2つの記録（直近7日 M2.5以上・1990〜2025年 M5以上）から、範囲と距離で選ぶ。外へは行かない */
+let QK = null;
+async function quakeData() {
+  if (QK) return QK; QK = { recent: [], hist: null, htime: null, man: null };
+  try { QK.man = await (await fetch("data/latest/manifest.json", { cache: "no-cache" })).json(); } catch (_) { return QK; }
+  try { const L = QK.man.layers.quakes; if (L) QK.recent = (await (await fetch("data/latest/" + L.file)).json()).rows; } catch (_) {}
+  try { const L = QK.man.layers["quake-history"]; if (L) { QK.hist = new Int16Array(await (await fetch("data/latest/" + L.file)).arrayBuffer()); if (L.timeFile) QK.htime = new Uint16Array(await (await fetch("data/latest/" + L.timeFile)).arrayBuffer()); } } catch (_) {}
+  return QK;
+}
+const distKm = (a1, o1, a2, o2) => { const r = Math.PI / 180, h = Math.sin((a2 - a1) * r / 2) ** 2 + Math.cos(a1 * r) * Math.cos(a2 * r) * Math.sin((o2 - o1) * r / 2) ** 2; return 12742 * Math.asin(Math.min(1, Math.sqrt(h))); };
+async function quakesIn(place, t0, t1, R = 300) {
+  const q = await quakeData(), out = [], seen = new Set();
+  for (const r of q.recent) { const t = r[3] * 60000; if (t < t0 || t >= t1) continue; const d = distKm(place.lat, place.lon, r[1], r[2]); if (d > R) continue; out.push({ t, mag: r[4], depth: r[6], d }); seen.add(Math.round(t / 60000)); }
+  if (q.hist && q.htime) for (let k = 0, i = 0; k < q.hist.length; k += 4, i++) { const t = Date.UTC(1990, 0, 1) + q.htime[2 * i] * 86400000 + q.htime[2 * i + 1] * 60000; if (t < t0 || t >= t1 || seen.has(Math.round(t / 60000))) continue;
+    const la = q.hist[k] / 100, lo = q.hist[k + 1] / 100; if (Math.abs(la - place.lat) > 3) continue; const d = distKm(place.lat, place.lon, la, lo); if (d > R) continue; out.push({ t, mag: q.hist[k + 3] / 10, depth: q.hist[k + 2], d }); }
+  return out.sort((a, b) => b.mag - a.mag);
+}
+const QF = new Intl.DateTimeFormat("ja-JP", { timeZone: "Asia/Tokyo", year: "numeric", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 const chip = (k, v) => `<span style="display:inline-block;border:1px solid var(--tile-edge);border-radius:8px;padding:3px 9px;margin:2px 4px 2px 0;font-size:14px"><span style="color:var(--ink-faint);font-size:12px">${k}</span> ${esc(v)}</span>`;
 async function serve(o, who, sec, text = "") {
   const L = window.LAB, P = await places(), out = $("wOut");
@@ -265,18 +285,24 @@ async function serve(o, who, sec, text = "") {
   const pl = o.where ? findPlace(o.where, P) : null, place = pl ? { name: pl.name, lat: pl.lat, lon: pl.lon } : L.place();
   let ticket = `<div style="margin:6px 0">${chip("書いた人", who + (sec != null ? `・${sec.toFixed(1)}秒` : ""))}${chip("何", o.what.join("・"))}${chip("いつ", o.day === "日付" ? o.date : o.day)}${chip("時間帯", o.part)}${chip("どこ", place.name + (o.where && !pl ? `（「${o.where}」は見つからず）` : ""))}</div>`;
   /* コードの点検：メニューにない品（気温など）を頼まれていたら、AIの伝票に関係なく止める。言葉で書かれた品だけ運ぶ */
-  const offWord = ["気温", "温度", "湿度", "雪", "雷", "霧", "紫外線", "花粉"].find(w => text.includes(w)) || (OFFRE.test(text) ? "気温" : ""), said = WHAT.filter(w => ({ 気圧: /気圧|hPa/, 風: /風|しけ/, 雨: /雨|降|しけ/, 波: /波|うねり/ })[w].test(text));
+  const offWord = ["気温", "温度", "湿度", "雪", "雷", "霧", "紫外線", "花粉"].find(w => text.includes(w)) || (OFFRE.test(text) ? "気温" : ""), said = WHAT.filter(w => ({ 気圧: /気圧|hPa/, 風: /風|しけ/, 雨: /雨|降|しけ/, 波: /波|うねり/, 地震: /地震|揺れ|ゆれ|震源/ })[w].test(text));
   if (offWord || o.what.includes(OFF)) {
     const swapped = offWord && !o.what.includes(OFF);
-    const note = `<p class="verdict"><b class="mid">「${esc(offWord || "その品")}」はメニューにありません</b>。記録庫にためているのは気圧・風・雨・波だけです。${swapped ? `<br><b class="ng">AIは伝票を「${esc(o.what.join("・"))}」に置きかえていました</b>。コードが気づいて止めました。` : ""}</p>`;
+    const note = `<p class="verdict"><b class="mid">「${esc(offWord || "その品")}」はメニューにありません</b>。運べるのは気圧・風・雨・波・地震だけです。${swapped ? `<br><b class="ng">AIは伝票を「${esc(o.what.join("・"))}」に置きかえていました</b>。コードが気づいて止めました。` : ""}</p>`;
     if (!said.length) { out.innerHTML = ticket + note; return; }
     o = { ...o, what: said }; ticket += note;
   }
   if (o.day === "未来") { out.innerHTML = ticket + `<p class="verdict"><b class="mid">この先のことはメニューにありません</b>。ここは過去の記録だけを運びます。この先の天気は <a href="https://www.jma.go.jp/bosai/forecast/" target="_blank" rel="noopener">気象庁の天気予報</a> へ。</p>`; return; }
   const rg = range(o); if (!rg) { out.innerHTML = ticket + `<p class="verdict"><b class="ng">日付が読めませんでした</b>。</p>`; return; }
   out.innerHTML = ticket + '<p class="note">記録庫から運んでいます…</p>';
+  let qHtml = "";
+  if (o.what.includes("地震")) { const qs = await quakesIn(place, o.day === "最近" ? Date.now() - 7 * 86400000 : rg.t0, rg.t1);
+    qHtml = `<p class="verdict"><b class="ok">地震</b>：${esc(place.name)} から300km以内・${o.day === "最近" ? "この7日" : esc(rg.label)}・${qs.length} 回${qs.length > 10 ? "（大きい順に10回まで）" : ""}</p>`
+      + (qs.length ? `<div class="tblbox"><table class="tbl"><tr><th>起きた時（日本時間）</th><th>M</th><th>深さ</th><th>距離</th></tr>${qs.slice(0, 10).map(q => `<tr><td>${QF.format(new Date(q.t))}</td><td>${q.mag.toFixed(1)}</td><td>${q.depth == null ? "—" : Math.round(q.depth) + " km"}</td><td>${Math.round(q.d)} km</td></tr>`).join("")}</table></div>` : "")
+      + `<p class="note">地震の記録：この7日は M2.5 以上、それより前は 1990〜2025年の M5 以上だけ（USGS。マグニチュードは気象庁の値と違うことがあり、震度ではありません）。過去の記録で、これから起きる場所を示すものではありません。</p>`;
+    if (o.what.every(w => w === "地震")) { out.innerHTML = ticket + qHtml; return; } }
   const rows = await L.rows(place, rg.t0, rg.t1), ix = L.index();
-  if (!rows.length) { const first = ix?.sets?.[0]; out.innerHTML = ticket + `<p class="verdict"><b class="mid">その時間の記録はありません</b>（${esc(rg.label)}）。${first ? `記録庫は ${L.F.format(new Date(first.validTime))} からです。` : ""}記録は6時間ごと（日本時間の0・6・12・18時ごろ）なので、時間帯がせまいと入らないことがあります。</p>`; return; }
+  if (!rows.length) { const first = ix?.sets?.[0]; out.innerHTML = ticket + qHtml + `<p class="verdict"><b class="mid">その時間の記録はありません</b>（${esc(rg.label)}）。${first ? `記録庫は ${L.F.format(new Date(first.validTime))} からです。` : ""}記録は6時間ごと（日本時間の0・6・12・18時ごろ）なので、時間帯がせまいと入らないことがあります。</p>`; return; }
   const cols = [], C = o.what;
   if (C.includes("気圧")) cols.push(["気圧 hPa", r => r.p == null ? "—" : r.p.toFixed(1)]);
   if (C.includes("風")) cols.push(["風 m/s", r => r.spd == null ? "—" : L.DIRS[Math.round(r.from / 22.5) % 16] + " " + r.spd.toFixed(1)]);
@@ -286,7 +312,7 @@ async function serve(o, who, sec, text = "") {
   const wv = C.includes("波") ? rows.filter(r => r.wh != null) : [];
   const waveNote = !C.includes("波") ? "" : !wv.length ? `<p class="note">波：この場所の近く（約150km以内）に海の升目がないか、まだ波の記録がない時間です（波は 10/13 からためはじめました）。</p>` : `<p class="note">波：${wv[0].wfar ? "選んだ場所は陸か岸の近くなので、近くの沖の値です。" : ""}有義波高（大きい方から3分の1の波の平均）。港や湾の中の波ではありません。</p>`;
   out.innerHTML = ticket + `<p class="verdict"><b class="ok">お持ちしました</b>：${esc(place.name)}・${esc(rg.label)}・${rows.length} 回分（運んだのはコード。値は記録庫そのまま）</p>`
-    + waveNote + `<div class="tblbox"><table class="tbl"><tr><th>時刻（日本時間）</th>${cols.map(c => `<th>${c[0]}</th>`).join("")}</tr>${rows.map(r => `<tr><td>${L.F.format(r.t)}</td>${cols.map(c => `<td>${c[1](r)}</td>`).join("")}</tr>`).join("")}</table></div>` + charts;
+    + waveNote + `<div class="tblbox"><table class="tbl"><tr><th>時刻（日本時間）</th>${cols.map(c => `<th>${c[0]}</th>`).join("")}</tr>${rows.map(r => `<tr><td>${L.F.format(r.t)}</td>${cols.map(c => `<td>${c[1](r)}</td>`).join("")}</tr>`).join("")}</table></div>` + charts + qHtml;
 }
 async function wGo(useAi) {
   const text = $("wIn").value.trim(); if (!text) return;
@@ -324,6 +350,8 @@ const TESTS = [
   ["ゆうべの京都の風", { what: ["風"], day: "昨日", part: "夜", where: "京都" }],
   ["きょうの明け方の東京の気圧", { what: ["気圧"], day: "今日", part: "深夜", where: "東京" }],
   ["おとといの舞鶴の波", { what: ["波"], day: "おととい", part: "一日", where: "舞鶴" }],
+  ["1995年1月17日の神戸の地震", { what: ["地震"], day: "日付", date: "1995/1/17", part: "一日", where: "神戸" }],
+  ["最近、京都のまわりで揺れた？", { what: ["地震"], day: "最近", part: "一日", where: "京都" }],
   ["昨日の京都市の最低気温は？", { what: [OFF], day: "昨日", part: "一日", where: "京都" }],
   ["なごやって昨日しけてた？", { what: ["風", "雨"], day: "昨日", part: "一日", where: "名古屋" }],
 ];
