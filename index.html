@@ -88,7 +88,6 @@
   #spinbadge b{color:var(--accent);font-weight:600;font-size:11.5px}
   #spinbadge span{color:var(--ink-faint)}
   .peek,.hint{transition:opacity .6s}
-  .peek.rest{transition:opacity 1.6s}
   body.objet #dashfab{opacity:0;pointer-events:none}
   body.objet .peek,body.objet .hint,body.objet .peek-pick{opacity:0!important;pointer-events:none}
   #spinbadge[hidden]{display:none}
@@ -110,18 +109,20 @@
   .meter div{display:flex;justify-content:space-between;gap:14px}
   .meter i{font-style:normal;color:var(--ink)}
   /* Lens：見る帯（触れない）と、開くボタン（右上）を分ける */
-  .peek{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(12px + env(safe-area-inset-bottom,0px));
-    width:max-content;max-width:calc(100% - 32px);display:flex;align-items:center;gap:12px;padding:8px 14px;
-    background:var(--panel);border:1px solid var(--line);border-radius:999px;pointer-events:none;
+  /* 左下の小さな札（地球を広く見せるため、真ん中から隅へ）。1行目：何を見ているか＋鮮度、2行目：いつの姿か */
+  .peek{position:fixed;left:16px;bottom:calc(12px + env(safe-area-inset-bottom,0px));
+    width:max-content;max-width:calc(100% - 32px);display:grid;grid-template-columns:auto auto;align-items:center;gap:3px 10px;padding:7px 12px;
+    background:var(--panel);border:1px solid var(--line);border-radius:12px;pointer-events:none;
     backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transition:opacity .25s}
-  .peek.rest{opacity:.5}
   .peek.dim{opacity:.35}
   .peek > *{min-width:0}
-  .peek-pick{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(58px + env(safe-area-inset-bottom,0px));
+  .peek .chip{grid-row:1;grid-column:2;justify-self:end}
+  .peek .when{grid-row:2;grid-column:1/-1}
+  .peek-pick{position:fixed;left:16px;bottom:calc(76px + env(safe-area-inset-bottom,0px));
     max-width:calc(100% - 32px);padding:6px 12px;border-radius:10px;background:var(--panel);border:1px solid var(--line);
     font-size:12px;line-height:1.6;color:var(--ink-soft);white-space:normal;text-align:left;width:max-content;max-height:40vh;overflow:auto;pointer-events:none}
   .peek-pick .num{font-family:var(--mono);color:var(--ink);font-variant-numeric:tabular-nums}
-  @media (max-width:560px){ .peek .mode small{display:none} .peek{gap:10px;padding:7px 12px} .peek .when{font-size:11px} }
+  @media (max-width:560px){ .peek .mode small{display:none} .peek{gap:2px 8px;padding:6px 10px} .peek .when{font-size:11px} }
   .lens-btn{position:fixed;right:16px;top:calc(12px + env(safe-area-inset-top,0px));width:44px;height:44px;border-radius:50%;
     display:grid;place-items:center;cursor:pointer;color:var(--ink);background:var(--panel);border:1px solid var(--line);
     backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);padding:0}

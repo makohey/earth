@@ -59,11 +59,6 @@ async function loadCatalog() {
 }
 
 let Catalog;
-/* 下の窓：回すと薄く、止まるとはっきり。しばらく（8秒）触らなければ、また半透明に戻る。窓に触れるとはっきり */
-let peekTimer = 0;
-function peekRest() { const pk = document.getElementById("peek"); if (!pk) return; pk.classList.remove("rest"); clearTimeout(peekTimer); peekTimer = setTimeout(() => pk.classList.add("rest"), 8000); }
-addEventListener("DOMContentLoaded", () => { const pk = document.getElementById("peek"); if (!pk) return;
-  for (const ev of ["pointerenter", "pointerdown", "focusin"]) pk.addEventListener(ev, peekRest); peekRest(); });
 /* 開発中の層は ?dev=1 のときだけ出す（公開中の地球儀を壊さずに本物のデータで確かめるため）
    2026-09-29：地図・気圧・雲・氷・地震は正規版へ（まことの決定）。いま ?dev=1 だけなのは棚に戻した空港の観測 */
 const DEV = new URLSearchParams(location.search).get("dev") === "1";
@@ -1734,13 +1729,13 @@ const Spin = (() => {
     if (!lock) {
       if (Math.hypot(total[0], total[1]) < 8) return;
       lock = Math.abs(total[1]) > Math.abs(total[0]) * 1.2 ? "v" : "h";
-      document.getElementById("peek")?.classList.add("dim"); clearTimeout(peekTimer);
+      document.getElementById("peek")?.classList.add("dim");
     }
     apply(dx, dy); vel = [dx, dy];
   });
   const up = e => {
     pointers.delete(e.pointerId);
-    if (pointers.size === 0) { active = false; document.getElementById("peek")?.classList.remove("dim"); peekRest(); }
+    if (pointers.size === 0) { active = false; document.getElementById("peek")?.classList.remove("dim"); }
   };
   el.addEventListener("pointerup", up); el.addEventListener("pointercancel", up);
   return {
