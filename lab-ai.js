@@ -192,13 +192,13 @@ async function arrange(useAi) {
 /* ===== 06 データのウエイター =====
    AIの仕事は「注文を聞いて伝票に書く」だけ。料理（値・表・グラフ）を運ぶのはコード。
    伝票はそのまま見せるので、まちがえたら「ちがう料理が来た」と分かる。日付の計算・未来の断り・場所さがしはコード */
-const WHAT = ["気圧", "風", "雨"], OFF = "メニューにない", OFFRE = /気温|温度|最高|最低|暑|寒|湿度|雪|雷|霧|紫外線|花粉/, DAYS = ["今日", "昨日", "おととい", "3日前", "4日前", "5日前", "6日前", "1週間前", "日付", "最近", "未来"], PARTS = ["一日", "深夜", "朝", "昼", "夕方", "夜"];
+const WHAT = ["気圧", "風", "雨", "波"], OFF = "メニューにない", OFFRE = /気温|温度|最高気温|最低気温|暑|寒|湿度|雪|雷|霧|紫外線|花粉/, DAYS = ["今日", "昨日", "おととい", "3日前", "4日前", "5日前", "6日前", "1週間前", "日付", "最近", "未来"], PARTS = ["一日", "深夜", "朝", "昼", "夕方", "夜"];
 const ORDER_SCHEMA = { type: "object", properties: {
   what: { type: "array", items: { type: "string", enum: [...WHAT, OFF] } }, day: { type: "string", enum: DAYS },
   date: { type: "string" }, part: { type: "string", enum: PARTS }, where: { type: "string" } }, required: ["what", "day", "part", "where"] };
 const WSYS = [
   "あなたはデータのウエイターです。お客さんの言葉を、注文の伝票（JSON）に書き直すだけが仕事です。答えや説明は書きません。",
-  `what：${WHAT.join("・")} から選ぶ（言われていなければ3つ全部）。気温・湿度・雪など、この3つにないものを頼まれたら「${OFF}」を入れる（似たものに置きかえない）`,
+  `what：${WHAT.join("・")} から選ぶ（言われていなければ全部）。気温・湿度・雪など、これらにないものを頼まれたら「${OFF}」を入れる（似たものに置きかえない）`,
   `day：${DAYS.join("・")} から選ぶ。「10月11日」「10/11」のように日付で言われたら「日付」にして date に「10/11」の形で書く。明日・来週などこの先のことは「未来」。言われていなければ「最近」`,
   `part：${PARTS.join("・")} から選ぶ（言われていなければ「一日」）`,
   "where：言われた地名をそのまま書く。言われていなければ空の文字",
@@ -219,7 +219,7 @@ function findPlace(text, P) {
 }
 /* AIなしの伝票係：言葉を拾うだけ（比べるための相手） */
 function ruleOrder(text, P) {
-  const what = WHAT.filter(w => ({ 気圧: /気圧|hPa|ヘクトパスカル/, 風: /風/, 雨: /雨|降/ })[w].test(text));
+  const what = WHAT.filter(w => ({ 気圧: /気圧|hPa|ヘクトパスカル/, 風: /風/, 雨: /雨|降/, 波: /波|うねり/ })[w].test(text));
   let day = "最近", date = "", m;
   if ((window.LAB?.FUTURE || []).some(w => text.includes(w))) day = "未来";
   else if ((m = text.match(/(\d{1,2})\s*[\/月]\s*(\d{1,2})/))) { day = "日付"; date = `${+m[1]}/${+m[2]}`; }
@@ -265,10 +265,10 @@ async function serve(o, who, sec, text = "") {
   const pl = o.where ? findPlace(o.where, P) : null, place = pl ? { name: pl.name, lat: pl.lat, lon: pl.lon } : L.place();
   let ticket = `<div style="margin:6px 0">${chip("書いた人", who + (sec != null ? `・${sec.toFixed(1)}秒` : ""))}${chip("何", o.what.join("・"))}${chip("いつ", o.day === "日付" ? o.date : o.day)}${chip("時間帯", o.part)}${chip("どこ", place.name + (o.where && !pl ? `（「${o.where}」は見つからず）` : ""))}</div>`;
   /* コードの点検：メニューにない品（気温など）を頼まれていたら、AIの伝票に関係なく止める。言葉で書かれた品だけ運ぶ */
-  const offWord = ["気温", "温度", "湿度", "雪", "雷", "霧", "紫外線", "花粉"].find(w => text.includes(w)) || (OFFRE.test(text) ? "気温" : ""), said = WHAT.filter(w => ({ 気圧: /気圧|hPa/, 風: /風|しけ/, 雨: /雨|降|しけ/ })[w].test(text));
+  const offWord = ["気温", "温度", "湿度", "雪", "雷", "霧", "紫外線", "花粉"].find(w => text.includes(w)) || (OFFRE.test(text) ? "気温" : ""), said = WHAT.filter(w => ({ 気圧: /気圧|hPa/, 風: /風|しけ/, 雨: /雨|降|しけ/, 波: /波|うねり/ })[w].test(text));
   if (offWord || o.what.includes(OFF)) {
     const swapped = offWord && !o.what.includes(OFF);
-    const note = `<p class="verdict"><b class="mid">「${esc(offWord || "その品")}」はメニューにありません</b>。記録庫にためているのは気圧・風・雨だけです。${swapped ? `<br><b class="ng">AIは伝票を「${esc(o.what.join("・"))}」に置きかえていました</b>。コードが気づいて止めました。` : ""}</p>`;
+    const note = `<p class="verdict"><b class="mid">「${esc(offWord || "その品")}」はメニューにありません</b>。記録庫にためているのは気圧・風・雨・波だけです。${swapped ? `<br><b class="ng">AIは伝票を「${esc(o.what.join("・"))}」に置きかえていました</b>。コードが気づいて止めました。` : ""}</p>`;
     if (!said.length) { out.innerHTML = ticket + note; return; }
     o = { ...o, what: said }; ticket += note;
   }
@@ -281,9 +281,12 @@ async function serve(o, who, sec, text = "") {
   if (C.includes("気圧")) cols.push(["気圧 hPa", r => r.p == null ? "—" : r.p.toFixed(1)]);
   if (C.includes("風")) cols.push(["風 m/s", r => r.spd == null ? "—" : L.DIRS[Math.round(r.from / 22.5) % 16] + " " + r.spd.toFixed(1)]);
   if (C.includes("雨")) cols.push(["雨", r => L.rainWord(r.rain)]);
-  const charts = (C.includes("気圧") ? L.chart(rows, "p", "気圧", "hPa", "#8fe3d4", 1) : "") + (C.includes("風") ? L.chart(rows, "spd", "風の速さ", "m/s", "#c9a7ff", 1) : "") + (C.includes("雨") ? L.chart(rows, "rain", "雨の強さ", "mm/時", "#7fb4ff", 1) : "");
+  if (C.includes("波")) cols.push(["波", r => r.wh == null ? "—" : `${r.wh.toFixed(1)} m${r.wdir != null ? "・" + L.DIRS[Math.round(r.wdir / 22.5) % 16] + "から" : ""}${r.wper != null ? "・" + r.wper.toFixed(0) + "秒" : ""}`]);
+  const charts = (C.includes("気圧") ? L.chart(rows, "p", "気圧", "hPa", "#8fe3d4", 1) : "") + (C.includes("風") ? L.chart(rows, "spd", "風の速さ", "m/s", "#c9a7ff", 1) : "") + (C.includes("雨") ? L.chart(rows, "rain", "雨の強さ", "mm/時", "#7fb4ff", 1) : "") + (C.includes("波") ? L.chart(rows, "wh", "波の高さ（有義波高）", "m", "#ffd27f", 1) : "");
+  const wv = C.includes("波") ? rows.filter(r => r.wh != null) : [];
+  const waveNote = !C.includes("波") ? "" : !wv.length ? `<p class="note">波：この場所の近く（約150km以内）に海の升目がないか、まだ波の記録がない時間です（波は 10/13 からためはじめました）。</p>` : `<p class="note">波：${wv[0].wfar ? "選んだ場所は陸か岸の近くなので、近くの沖の値です。" : ""}有義波高（大きい方から3分の1の波の平均）。港や湾の中の波ではありません。</p>`;
   out.innerHTML = ticket + `<p class="verdict"><b class="ok">お持ちしました</b>：${esc(place.name)}・${esc(rg.label)}・${rows.length} 回分（運んだのはコード。値は記録庫そのまま）</p>`
-    + `<div class="tblbox"><table class="tbl"><tr><th>時刻（日本時間）</th>${cols.map(c => `<th>${c[0]}</th>`).join("")}</tr>${rows.map(r => `<tr><td>${L.F.format(r.t)}</td>${cols.map(c => `<td>${c[1](r)}</td>`).join("")}</tr>`).join("")}</table></div>` + charts;
+    + waveNote + `<div class="tblbox"><table class="tbl"><tr><th>時刻（日本時間）</th>${cols.map(c => `<th>${c[0]}</th>`).join("")}</tr>${rows.map(r => `<tr><td>${L.F.format(r.t)}</td>${cols.map(c => `<td>${c[1](r)}</td>`).join("")}</tr>`).join("")}</table></div>` + charts;
 }
 async function wGo(useAi) {
   const text = $("wIn").value.trim(); if (!text) return;
@@ -320,6 +323,7 @@ const TESTS = [
   /* ここから下は、AIなしの係が知らない言い方（ルミが係を作ったあとに足した。比べどころ） */
   ["ゆうべの京都の風", { what: ["風"], day: "昨日", part: "夜", where: "京都" }],
   ["きょうの明け方の東京の気圧", { what: ["気圧"], day: "今日", part: "深夜", where: "東京" }],
+  ["おとといの舞鶴の波", { what: ["波"], day: "おととい", part: "一日", where: "舞鶴" }],
   ["昨日の京都市の最低気温は？", { what: [OFF], day: "昨日", part: "一日", where: "京都" }],
   ["なごやって昨日しけてた？", { what: ["風", "雨"], day: "昨日", part: "一日", where: "名古屋" }],
 ];
