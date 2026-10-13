@@ -38,11 +38,11 @@ async function modelFor(key) {
   if (!lib) throw new Error("この版の WebLLM に、TinySwallow を動かす部品（Qwen2.5 1.5B 用）が見つかりませんでした");
   return { id: s.id, appConfig: { ...base, model_list: [...base.model_list, { model: s.repo, model_id: s.id, model_lib: lib }] } };
 }
-async function load(key) {
+async function load(key, auto = false) {
   if (!("gpu" in navigator)) { log("この端末のブラウザには WebGPU がないので、AIは動かせません（実験室の他の部分はそのまま使えます）"); return; }
   const s = SEATS[key];
-  if (key === "jp" && isPhone() && !confirm(`${s.label}は${s.size}あります。iPhone だとページが落ちることがあります（記録や設定は消えません）。読み込みますか？`)) return;
-  if (key === "light" && !confirm(`${s.label}（${s.size}）を Hugging Face から読み込みます。通信量に気をつけてください。読み込みますか？`)) return;
+  if (!auto && key === "jp" && isPhone() && !confirm(`${s.label}は${s.size}あります。iPhone だとページが落ちることがあります（記録や設定は消えません）。読み込みますか？`)) return;
+  if (!auto && key === "light" && !confirm(`${s.label}（${s.size}）を Hugging Face から読み込みます。通信量に気をつけてください。読み込みますか？`)) return;
   setBusy(true); lastModel = null; const t0 = performance.now();
   try {
     webllm = libs[key] ||= await import(LIBS[key]);
@@ -51,7 +51,7 @@ async function load(key) {
     if (engine) { try { await engine.unload(); } catch (_) {} engine = null; }
     log("読み込みを始めます…");
     engine = await webllm.CreateMLCEngine(m.id, { appConfig: m.appConfig, initProgressCallback: p => { log(`読み込み中：${Math.round((p.progress || 0) * 100)}%　${p.text || ""}`); const b = $("aiBar"); if (b) b.style.width = `${Math.round((p.progress || 0) * 100)}%`; } });
-    curId = m.id; const sec = (performance.now() - t0) / 1000;
+    curId = m.id; try { localStorage.setItem("lab.ai.seat", key); } catch (_) {} const sec = (performance.now() - t0) / 1000;
     (stats[m.id] ||= { loads: 0, runs: 0, passed: 0, blocked: 0 }).loads++; stats[m.id].loadSec = sec; saveStats();
     log(`読み込み完了：${m.id}（${sec.toFixed(0)} 秒）。「ふりかえりを書かせる」を押してください。`);
   } catch (e) { log(`読み込めませんでした（${SEATS[key].label}）：` + (e?.message || e) + "　→ どこで止まったか調べています…"); await probe(m0(), `（${SEATS[key].label}）` + String(e?.message || e)); }
@@ -118,13 +118,13 @@ function showStats() {
 /* ===== 06 データのウエイター =====
    AIの仕事は「注文を聞いて伝票に書く」だけ。料理（値・表・グラフ）を運ぶのはコード。
    伝票はそのまま見せるので、まちがえたら「ちがう料理が来た」と分かる。日付の計算・未来の断り・場所さがしはコード */
-const WHAT = ["気圧", "風", "雨"], DAYS = ["今日", "昨日", "おととい", "3日前", "4日前", "5日前", "6日前", "1週間前", "日付", "最近", "未来"], PARTS = ["一日", "深夜", "朝", "昼", "夕方", "夜"];
+const WHAT = ["気圧", "風", "雨"], OFF = "メニューにない", OFFRE = /気温|温度|最高|最低|暑|寒|湿度|雪|雷|霧|紫外線|花粉/, DAYS = ["今日", "昨日", "おととい", "3日前", "4日前", "5日前", "6日前", "1週間前", "日付", "最近", "未来"], PARTS = ["一日", "深夜", "朝", "昼", "夕方", "夜"];
 const ORDER_SCHEMA = { type: "object", properties: {
-  what: { type: "array", items: { type: "string", enum: WHAT } }, day: { type: "string", enum: DAYS },
+  what: { type: "array", items: { type: "string", enum: [...WHAT, OFF] } }, day: { type: "string", enum: DAYS },
   date: { type: "string" }, part: { type: "string", enum: PARTS }, where: { type: "string" } }, required: ["what", "day", "part", "where"] };
 const WSYS = [
   "あなたはデータのウエイターです。お客さんの言葉を、注文の伝票（JSON）に書き直すだけが仕事です。答えや説明は書きません。",
-  `what：${WHAT.join("・")} から選ぶ（言われていなければ3つ全部）`,
+  `what：${WHAT.join("・")} から選ぶ（言われていなければ3つ全部）。気温・湿度・雪など、この3つにないものを頼まれたら「${OFF}」を入れる（似たものに置きかえない）`,
   `day：${DAYS.join("・")} から選ぶ。「10月11日」「10/11」のように日付で言われたら「日付」にして date に「10/11」の形で書く。明日・来週などこの先のことは「未来」。言われていなければ「最近」`,
   `part：${PARTS.join("・")} から選ぶ（言われていなければ「一日」）`,
   "where：言われた地名をそのまま書く。言われていなければ空の文字",
@@ -156,7 +156,8 @@ function ruleOrder(text, P) {
   else if ((m = text.match(/([3-6三四五六])日前/))) day = `${{ 三: 3, 四: 4, 五: 5, 六: 6 }[m[1]] || m[1]}日前`;
   const part = /深夜|夜中|未明/.test(text) ? "深夜" : /夕方/.test(text) ? "夕方" : /夜|晩/.test(text) ? "夜" : /朝|午前/.test(text) ? "朝" : /昼|日中|午後/.test(text) ? "昼" : "一日";
   const pl = findPlace(text, P);
-  return { what: what.length ? what : WHAT.slice(), day, date, part, where: pl ? pl.keys[1] || pl.name : "" };
+  const off = OFFRE.test(text);
+  return { what: what.length ? (off ? [...what, OFF] : what) : off ? [OFF] : WHAT.slice(), day, date, part, where: pl ? pl.keys[1] || pl.name : "" };
 }
 async function aiOrder(text) {
   const msgs = [{ role: "system", content: WSYS }, { role: "user", content: text }];
@@ -168,7 +169,7 @@ async function aiOrder(text) {
   try { o = JSON.parse(j ? j[0] : raw); } catch (_) {}
   if (!o) return { bad: true, raw };
   /* コードの点検：メニューにない品は落とす */
-  const what = (Array.isArray(o.what) ? o.what : []).filter(w => WHAT.includes(w));
+  const what = (Array.isArray(o.what) ? o.what : []).filter(w => WHAT.includes(w) || w === OFF);
   return { what: what.length ? what : WHAT.slice(), day: DAYS.includes(o.day) ? o.day : "最近", date: String(o.date || ""), part: PARTS.includes(o.part) ? o.part : "一日", where: String(o.where || ""), raw };
 }
 /* 伝票 → 時間の範囲（日本時間）。計算はコード */
@@ -184,11 +185,19 @@ function range(o) {
   return { t0: d0 + h0 * 3600000, t1: d0 + h1 * 3600000, label: `${new Date(d0 + 9 * 3600000).getUTCMonth() + 1}/${new Date(d0 + 9 * 3600000).getUTCDate()} ${o.part}` };
 }
 const chip = (k, v) => `<span style="display:inline-block;border:1px solid var(--tile-edge);border-radius:8px;padding:3px 9px;margin:2px 4px 2px 0;font-size:14px"><span style="color:var(--ink-faint);font-size:12px">${k}</span> ${esc(v)}</span>`;
-async function serve(o, who, sec) {
+async function serve(o, who, sec, text = "") {
   const L = window.LAB, P = await places(), out = $("wOut");
   if (o.bad) { out.innerHTML = `<p class="verdict"><b class="ng">伝票が読めませんでした</b>（${who}）。もう一度、言い方を変えて頼んでみてください。</p><details><summary>AIが書いたもの</summary><pre class="note">${esc(o.raw)}</pre></details>`; return; }
   const pl = o.where ? findPlace(o.where, P) : null, place = pl ? { name: pl.name, lat: pl.lat, lon: pl.lon } : L.place();
-  const ticket = `<div style="margin:6px 0">${chip("書いた人", who + (sec != null ? `・${sec.toFixed(1)}秒` : ""))}${chip("何", o.what.join("・"))}${chip("いつ", o.day === "日付" ? o.date : o.day)}${chip("時間帯", o.part)}${chip("どこ", place.name + (o.where && !pl ? `（「${o.where}」は見つからず）` : ""))}</div>`;
+  let ticket = `<div style="margin:6px 0">${chip("書いた人", who + (sec != null ? `・${sec.toFixed(1)}秒` : ""))}${chip("何", o.what.join("・"))}${chip("いつ", o.day === "日付" ? o.date : o.day)}${chip("時間帯", o.part)}${chip("どこ", place.name + (o.where && !pl ? `（「${o.where}」は見つからず）` : ""))}</div>`;
+  /* コードの点検：メニューにない品（気温など）を頼まれていたら、AIの伝票に関係なく止める。言葉で書かれた品だけ運ぶ */
+  const offWord = ["気温", "温度", "湿度", "雪", "雷", "霧", "紫外線", "花粉"].find(w => text.includes(w)) || (OFFRE.test(text) ? "気温" : ""), said = WHAT.filter(w => ({ 気圧: /気圧|hPa/, 風: /風|しけ/, 雨: /雨|降|しけ/ })[w].test(text));
+  if (offWord || o.what.includes(OFF)) {
+    const swapped = offWord && !o.what.includes(OFF);
+    const note = `<p class="verdict"><b class="mid">「${esc(offWord || "その品")}」はメニューにありません</b>。記録庫にためているのは気圧・風・雨だけです。${swapped ? `<br><b class="ng">AIは伝票を「${esc(o.what.join("・"))}」に置きかえていました</b>。コードが気づいて止めました。` : ""}</p>`;
+    if (!said.length) { out.innerHTML = ticket + note; return; }
+    o = { ...o, what: said }; ticket += note;
+  }
   if (o.day === "未来") { out.innerHTML = ticket + `<p class="verdict"><b class="mid">この先のことはメニューにありません</b>。ここは過去の記録だけを運びます。この先の天気は <a href="https://www.jma.go.jp/bosai/forecast/" target="_blank" rel="noopener">気象庁の天気予報</a> へ。</p>`; return; }
   const rg = range(o); if (!rg) { out.innerHTML = ticket + `<p class="verdict"><b class="ng">日付が読めませんでした</b>。</p>`; return; }
   out.innerHTML = ticket + '<p class="note">記録庫から運んでいます…</p>';
@@ -205,10 +214,10 @@ async function serve(o, who, sec) {
 async function wGo(useAi) {
   const text = $("wIn").value.trim(); if (!text) return;
   const P = await places();
-  if (!useAi) return serve(ruleOrder(text, P), "AIなし");
+  if (!useAi) return serve(ruleOrder(text, P), "AIなし", null, text);
   if (!engine) return;
   setBusy(true); $("wOut").innerHTML = '<p class="note">AIが伝票を書いています…</p>'; const t0 = performance.now();
-  try { const o = await aiOrder(text); await serve(o, "AI（" + curId.split("-").slice(0, 2).join(" ") + "）", (performance.now() - t0) / 1000); }
+  try { const o = await aiOrder(text); await serve(o, "AI（" + curId.split("-").slice(0, 2).join(" ") + "）", (performance.now() - t0) / 1000, text); }
   catch (e) { $("wOut").innerHTML = `<p class="verdict"><b class="ng">止まりました</b>：${esc(e?.message || e)}</p>`; }
   finally { setBusy(false); }
 }
@@ -237,11 +246,12 @@ const TESTS = [
   /* ここから下は、AIなしの係が知らない言い方（ルミが係を作ったあとに足した。比べどころ） */
   ["ゆうべの京都の風", { what: ["風"], day: "昨日", part: "夜", where: "京都" }],
   ["きょうの明け方の東京の気圧", { what: ["気圧"], day: "今日", part: "深夜", where: "東京" }],
+  ["昨日の京都市の最低気温は？", { what: [OFF], day: "昨日", part: "一日", where: "京都" }],
   ["なごやって昨日しけてた？", { what: ["風", "雨"], day: "昨日", part: "一日", where: "名古屋" }],
 ];
 function score(o, want, P) {
   if (o.bad) return { ok: false, why: "読めない" };
-  const miss = [];
+  const miss = []; want = { ...want, what: want.what || WHAT };
   if (want.day === "未来") return o.day === "未来" ? { ok: true } : { ok: false, why: `いつ：${o.day}` };
   if (want.day === "日付?") { /* 正解が決まらない言い方。「未来」にしなければ可（どう書いたかを見る） */ }
   else if (o.day !== want.day) miss.push(`いつ：${o.day}`);
@@ -297,6 +307,7 @@ async function mount() {
     <button type="button" id="aiJp">${esc(SEATS.jp.label)}・${SEATS.jp.size}${rec === "jp" ? "　★この端末のおすすめ" : ""}</button>
   </div>
   <div style="height:4px;background:rgba(150,172,226,.15);border-radius:4px;overflow:hidden;margin:4px 0 8px"><div id="aiBar" style="height:100%;width:0;background:#c9a7ff"></div></div>
+  <label class="note" style="display:block;margin:2px 0 2px"><input type="checkbox" id="aiAuto" checked> 開いた時、前に使った席を自動で読み込む（端末の中にある時だけ。通信なし）</label>
   <label class="note" style="display:block;margin:2px 0 6px"><input type="checkbox" id="aiIDB"> 保存のしかたを変える（IndexedDB。読み込めないときの試し）</label>
   <p class="note" id="aiLog" style="white-space:pre-wrap">${"gpu" in navigator ? "席を選ぶと読み込みが始まります。" : "この端末のブラウザには WebGPU がないので、AIは動かせません。"}</p>
   <div class="ctrl"><button type="button" id="aiRun" disabled>ふりかえりを書かせる</button><button type="button" id="aiDel" disabled>読み込んだモデルを消す</button></div>
@@ -304,7 +315,21 @@ async function mount() {
   <p class="note">この端末での記録（端末の中だけ）</p><div class="kv" id="aiStats"></div>
   <p class="note">軽い席は海外製、少し上の席は日本製（Sakana AI の TinySwallow。有志がブラウザ用に変換したもの）。どちらも試しです。AIはまちがえることがあります。</p>`;
   $("aiLight").onclick = () => load("light"); $("aiJp").onclick = () => load("jp"); $("aiRun").onclick = run; $("aiDel").onclick = del;
-  showStats(); mountWaiter();
+  showStats(); mountWaiter(); autoLoad();
+}
+/* 前に読み込めた席が端末の中に残っていれば、開いた時に自動で読み込む（通信なし。置き場へは行かない） */
+async function autoLoad() {
+  let key = null; try { key = localStorage.getItem("lab.ai.seat"); } catch (_) {}
+  const box = $("aiAuto"); try { box.checked = localStorage.getItem("lab.ai.auto") !== "0"; } catch (_) {}
+  box.onchange = () => { try { localStorage.setItem("lab.ai.auto", box.checked ? "1" : "0"); } catch (_) {} };
+  if (!key || !SEATS[key] || !box.checked || !("gpu" in navigator)) return;
+  try {
+    webllm = libs[key] ||= await import(LIBS[key]);
+    const m = await modelFor(key);
+    if (!(await webllm.hasModelInCache(m.id, m.appConfig))) return;
+    log(`前に使った ${SEATS[key].label} が端末の中にあるので、自動で読み込みます（通信なし）…`);
+    await load(key, true);
+  } catch (_) {}
 }
 if (document.readyState === "loading") addEventListener("DOMContentLoaded", mount); else mount();
 })();
