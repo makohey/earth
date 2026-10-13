@@ -40,19 +40,36 @@ async function load(key) {
   const s = SEATS[key];
   if (key === "jp" && isPhone() && !confirm(`${s.label}は${s.size}あります。iPhone だとページが落ちることがあります（記録や設定は消えません）。読み込みますか？`)) return;
   if (key === "light" && !confirm(`${s.label}（${s.size}）を Hugging Face から読み込みます。通信量に気をつけてください。読み込みますか？`)) return;
-  setBusy(true); const t0 = performance.now();
+  setBusy(true); lastModel = null; const t0 = performance.now();
   try {
     webllm = webllm || await import(LIB);
-    const m = await modelFor(key);
+    const m = await modelFor(key); lastModel = m;
+    if (useIDB()) m.appConfig = { ...(m.appConfig || webllm.prebuiltAppConfig), cacheBackend: "indexeddb", useIndexedDBCache: true };
     if (engine) { try { await engine.unload(); } catch (_) {} engine = null; }
     log("読み込みを始めます…");
     engine = await webllm.CreateMLCEngine(m.id, { appConfig: m.appConfig, initProgressCallback: p => { log(`読み込み中：${Math.round((p.progress || 0) * 100)}%　${p.text || ""}`); const b = $("aiBar"); if (b) b.style.width = `${Math.round((p.progress || 0) * 100)}%`; } });
     curId = m.id; const sec = (performance.now() - t0) / 1000;
     (stats[m.id] ||= { loads: 0, runs: 0, passed: 0, blocked: 0 }).loads++; stats[m.id].loadSec = sec; saveStats();
     log(`読み込み完了：${m.id}（${sec.toFixed(0)} 秒）。「ふりかえりを書かせる」を押してください。`);
-  } catch (e) { log("読み込めませんでした：" + (e?.message || e)); }
+  } catch (e) { log(`読み込めませんでした（${SEATS[key].label}）：` + (e?.message || e) + "　→ どこで止まったか調べています…"); await probe(m0(), `（${SEATS[key].label}）` + String(e?.message || e)); }
   finally { setBusy(false); showStats(); }
 }
+/* 失敗したとき：どの置き場が断ったかを1回ずつだけ確かめる（何度も叩かない） */
+let lastModel = null; const m0 = () => lastModel;
+async function probe(m, msg) {
+  if (!m) return;
+  const base = (m.appConfig || webllm.prebuiltAppConfig).model_list.find(x => x.model_id === m.id);
+  if (!base) { log(`読み込めませんでした：${msg}（席の情報が見つからない）`); return; }
+  const url = base.model.replace(/\/?$/, "/") + (/\/resolve\//.test(base.model) ? "" : "resolve/main/");
+  const tries = [["モデルの設定（Hugging Face）", url + "mlc-chat-config.json"], ["動かす部品（GitHub）", base.model_lib]];
+  const out = [];
+  for (const [name, u] of tries) {
+    try { const r = await fetch(u, { method: "HEAD", cache: "no-store" }); out.push(`${name}：${r.ok ? "届く" : "断られた " + r.status}`); }
+    catch (e) { out.push(`${name}：届かない（${e?.message || e}）`); }
+  }
+  log(`読み込めませんでした：${msg}\n調べた結果 → ${out.join("／")}\n保存のしかた：${useIDB() ? "IndexedDB" : "Cache"}`);
+}
+const useIDB = () => !!$("aiIDB")?.checked;
 function setBusy(b) { for (const id of ["aiLight", "aiJp"]) { const el = $(id); if (el) el.disabled = b; } for (const id of ["aiRun", "aiDel"]) { const el = $(id); if (el) el.disabled = b || !engine; } }
 
 /* 数字の照合：AIの文に出てくる数字が、渡した事実の中にあるか */
@@ -86,7 +103,7 @@ async function run() {
 }
 async function del() {
   if (!curId || !webllm) return; if (!confirm("読み込んだモデルを、この端末から消しますか？（また使う時は読み込み直しになります）")) return;
-  try { if (engine) await engine.unload(); engine = null; const m = await modelFor(Object.keys(SEATS).find(k => (SEATS[k].id || "") === curId) || "light");
+  try { if (engine) await engine.unload(); engine = null; const m = lastModel || await modelFor(Object.keys(SEATS).find(k => (SEATS[k].id || "") === curId) || "light");
     await webllm.deleteModelAllInfoInCache(curId, m.appConfig); log("消しました。端末の容量が戻ります。"); curId = null; setBusy(false); }
   catch (e) { log("消せませんでした：" + (e?.message || e)); }
 }
@@ -105,7 +122,8 @@ async function mount() {
     <button type="button" id="aiJp">${esc(SEATS.jp.label)}・${SEATS.jp.size}${rec === "jp" ? "　★この端末のおすすめ" : ""}</button>
   </div>
   <div style="height:4px;background:rgba(150,172,226,.15);border-radius:4px;overflow:hidden;margin:4px 0 8px"><div id="aiBar" style="height:100%;width:0;background:#c9a7ff"></div></div>
-  <p class="note" id="aiLog">${"gpu" in navigator ? "席を選ぶと読み込みが始まります。" : "この端末のブラウザには WebGPU がないので、AIは動かせません。"}</p>
+  <label class="note" style="display:block;margin:2px 0 6px"><input type="checkbox" id="aiIDB"> 保存のしかたを変える（IndexedDB。読み込めないときの試し）</label>
+  <p class="note" id="aiLog" style="white-space:pre-wrap">${"gpu" in navigator ? "席を選ぶと読み込みが始まります。" : "この端末のブラウザには WebGPU がないので、AIは動かせません。"}</p>
   <div class="ctrl"><button type="button" id="aiRun" disabled>ふりかえりを書かせる</button><button type="button" id="aiDel" disabled>読み込んだモデルを消す</button></div>
   <div id="aiOut"></div>
   <p class="note">この端末での記録（端末の中だけ）</p><div class="kv" id="aiStats"></div>
