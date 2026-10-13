@@ -177,7 +177,7 @@ function lineChart(rows, key, label, unit, color, digits) {
     <text x="${W - 8}" y="10" fill="#67718a" font-size="10" text-anchor="end">高 ${mx.toFixed(digits)} ／ 低 ${mn.toFixed(digits)}</text>
     <line x1="${P}" y1="${H - 20}" x2="${W - 8}" y2="${H - 20}" stroke="rgba(150,172,226,.2)"/>
     <path d="${path}" fill="none" stroke="${color}" stroke-width="2"/>${dots}
-    <text x="${P}" y="${H - 6}" fill="#67718a" font-size="10">${FS.format(pts[0].t)}時</text><text x="${W - 8}" y="${H - 6}" fill="#67718a" font-size="10" text-anchor="end">${FS.format(pts[pts.length - 1].t)}時</text></svg>`;
+    <text x="${P}" y="${H - 6}" fill="#67718a" font-size="10">${FS.format(pts[0].t)}</text><text x="${W - 8}" y="${H - 6}" fill="#67718a" font-size="10" text-anchor="end">${FS.format(pts[pts.length - 1].t)}</text></svg>`;
 }
 const rainWord = v => v == null ? "—" : v < 0.1 ? "なし" : v < 3 ? "弱い雨" : v < 10 ? "雨" : v < 20 ? "やや強い雨" : "強い雨";
 
