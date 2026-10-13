@@ -49,6 +49,9 @@
   .kv span:nth-child(odd){color:var(--ink-soft)}
   .note{font-size:12px;color:var(--ink-faint);line-height:1.7}
   #loading{color:var(--ink-soft)}
+  .aiText{font-size:15px;line-height:1.8;background:rgba(201,167,255,.08);border-left:3px solid var(--lab);padding:8px 12px;border-radius:6px;margin:8px 0}
+  details summary{cursor:pointer;color:var(--ink-soft);font-size:13px}
+  .ctrl button:disabled{opacity:.4;cursor:default}
 </style>
 </head>
 <body>
@@ -100,6 +103,8 @@
   <div class="kv" id="env"></div>
   <p class="note" id="envnote"></p>
 </section>
+
+<section class="card" id="aiCard"></section>
 
 <p class="note">データ：地球儀が自分のページに置いた記録庫（GFS の風・雨・気圧の計算、約100km四方）。観測ではありません。水源へは行きません。</p>
 </div>
@@ -221,6 +226,8 @@ function corrHtml(rows) {
 
 /* ===== ③ 見張り ===== */
 const FUTURE = ["明日", "あした", "あす", "明後日", "あさって", "来週", "今夜", "今晩", "これから", "この先", "今後", "でしょう", "見込み", "予想", "予報", "おそれ", "恐れ", "可能性があります", "なりそう", "降りそう", "しそう", "になるかも", "だろう", "傘を", "避難", "気をつけて"];
+let LAST_FACTS = [];
+window.LAB = { facts: () => LAST_FACTS.slice(), guard: t => guard(t) };   /* 05（ローカルAI）に渡す口：事実のリストと見張り */
 function guard(text) { const hits = FUTURE.filter(w => text.includes(w)); return { ok: !hits.length, hits }; }
 function runGuard() {
   const t = $("guardIn").value, g = guard(t);
@@ -255,7 +262,7 @@ async function render() {
   $("charts").innerHTML = lineChart(rows, "p", "気圧", "hPa", "#8fe3d4", 1) + lineChart(rows, "spd", "風の速さ", "m/s", "#c9a7ff", 1) + lineChart(rows, "rain", "雨の強さ", "mm/時", "#7fb4ff", 1) || '<p class="note">グラフは記録が2回分以上たまると出ます。</p>';
   $("tbl").innerHTML = `<tr><th>時刻（日本時間）</th><th>気圧 hPa</th><th>風</th><th>雨</th></tr>` + rows.slice().reverse().map(r => `<tr><td>${F.format(r.t)}</td><td>${r.p == null ? "—" : r.p.toFixed(1)}</td><td>${r.spd == null ? "—" : DIRS[Math.round(r.from / 22.5) % 16] + " " + r.spd.toFixed(1)}</td><td>${rainWord(r.rain)}</td></tr>`).join("");
   $("arcnote").textContent = `記録庫には全部で ${INDEX.sets.length} 回分（${INDEX.keepDays}日分まで残します）。この期間で使ったのは ${rows.length} 回分。`;
-  $("facts").innerHTML = facts(rows).map(f => `<li>${esc(f)}</li>`).join("");
+  LAST_FACTS = facts(rows); $("facts").innerHTML = LAST_FACTS.map(f => `<li>${esc(f)}</li>`).join("");
   $("corr").innerHTML = corrHtml(rows);
 }
 document.querySelectorAll("[data-days]").forEach(b => b.addEventListener("click", () => { days = +b.dataset.days; document.querySelectorAll("[data-days]").forEach(x => x.setAttribute("aria-pressed", String(x === b))); render(); }));
@@ -267,5 +274,6 @@ $("guardList").textContent = FUTURE.join("・");
   runGuard(); envCheck(); render();
 })();
 </script>
+<script src="lab-ai.js"></script>
 </body>
 </html>
