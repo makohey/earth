@@ -122,6 +122,7 @@
 </footer>
 
 <script src="astro.js"></script>
+<script src="calc.js"></script>
 <script>
 "use strict";
 const D2R = Math.PI / 180;
@@ -334,6 +335,7 @@ function moonDisk(age) {
 const tile = (cls, head, body) => `<section class="tile ${cls}"><div class="th">${head}</div>${body}</section>`;
 
 let cur = null;
+window.Dash = { cur: () => cur, places: () => D.places };   /* 電卓に渡す口：いまの場所と地名の一覧 */
 async function choose(name, lat, lon) {
   cur = { name, lat: +lat, lon: ((+lon + 540) % 360) - 180 };
   $("q").value = name.replace(/のあたり$|から約.*$/, ""); $("sugg").hidden = true;
@@ -437,6 +439,7 @@ async function render() {
     <div class="say">予報は、許可を受けた気象庁などの情報を見てください。</div>`));
   grid.innerHTML = out.join(""); grid.hidden = false;
   try { window.Astro?.render(cur); } catch (e) { console.warn("アストロノミーを描けませんでした", e); }
+  dispatchEvent(new Event("dash:render"));   /* 電卓（calc.js）が数字に点線をつける */
 }
 
 (async () => {
