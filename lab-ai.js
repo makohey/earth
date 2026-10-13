@@ -7,7 +7,10 @@
 "use strict";
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-const LIB = "https://esm.run/@mlc-ai/web-llm@0.2";
+/* 版を固定する。0.2.80 から設定ファイル名が tensor-cache.json に変わり、
+   TinySwallow の置き場には古い名前（ndarray-cache.json）しかないので、日本製の席は 0.2.79 を使う（2026-10-13 iPad Safari で確認） */
+const LIBS = { light: "https://esm.run/@mlc-ai/web-llm@0.2.86", jp: "https://esm.run/@mlc-ai/web-llm@0.2.79" };
+const libs = {};
 /* 2つの席：軽い（海外製・iPhone向き）／少し上（日本製・iPad向き） */
 const SEATS = {
   light: { label: "軽い：Qwen2.5 0.5B（Alibaba・中国）", size: "約0.4GB", f16: "Qwen2.5-0.5B-Instruct-q4f16_1-MLC", f32: "Qwen2.5-0.5B-Instruct-q4f32_1-MLC" },
@@ -42,7 +45,7 @@ async function load(key) {
   if (key === "light" && !confirm(`${s.label}（${s.size}）を Hugging Face から読み込みます。通信量に気をつけてください。読み込みますか？`)) return;
   setBusy(true); lastModel = null; const t0 = performance.now();
   try {
-    webllm = webllm || await import(LIB);
+    webllm = libs[key] ||= await import(LIBS[key]);
     const m = await modelFor(key); lastModel = m;
     if (useIDB()) m.appConfig = { ...(m.appConfig || webllm.prebuiltAppConfig), cacheBackend: "indexeddb", useIndexedDBCache: true };
     if (engine) { try { await engine.unload(); } catch (_) {} engine = null; }
