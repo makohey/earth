@@ -88,6 +88,7 @@
   #spinbadge b{color:var(--accent);font-weight:600;font-size:11.5px}
   #spinbadge span{color:var(--ink-faint)}
   .peek,.hint{transition:opacity .6s}
+  .peek.rest{transition:opacity 1.6s}
   body.objet #dashfab{opacity:0;pointer-events:none}
   body.objet .peek,body.objet .hint,body.objet .peek-pick{opacity:0!important;pointer-events:none}
   #spinbadge[hidden]{display:none}
@@ -113,6 +114,7 @@
     width:max-content;max-width:calc(100% - 32px);display:flex;align-items:center;gap:12px;padding:8px 14px;
     background:var(--panel);border:1px solid var(--line);border-radius:999px;pointer-events:none;
     backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transition:opacity .25s}
+  .peek.rest{opacity:.5}
   .peek.dim{opacity:.35}
   .peek > *{min-width:0}
   .peek-pick{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(58px + env(safe-area-inset-bottom,0px));
