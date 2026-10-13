@@ -53,7 +53,7 @@ async function load(key, auto = false) {
     engine = await webllm.CreateMLCEngine(m.id, { appConfig: m.appConfig, initProgressCallback: p => { log(`読み込み中：${Math.round((p.progress || 0) * 100)}%　${p.text || ""}`); const b = $("aiBar"); if (b) b.style.width = `${Math.round((p.progress || 0) * 100)}%`; } });
     curId = m.id; try { localStorage.setItem("lab.ai.seat", key); } catch (_) {} const sec = (performance.now() - t0) / 1000;
     (stats[m.id] ||= { loads: 0, runs: 0, passed: 0, blocked: 0 }).loads++; stats[m.id].loadSec = sec; saveStats();
-    log(`読み込み完了：${m.id}（${sec.toFixed(0)} 秒）。「AIに並べてもらう」か、06番の「AIに頼む」を押してください。`);
+    log(`読み込み完了：${m.id}（${sec.toFixed(0)} 秒）。「AIに並べてもらう」か、06番の「AIに聞く」を押してください。`);
   } catch (e) { log(`読み込めませんでした（${SEATS[key].label}）：` + (e?.message || e) + "　→ どこで止まったか調べています…"); await probe(m0(), `（${SEATS[key].label}）` + String(e?.message || e)); }
   finally { setBusy(false); showStats(); }
 }
@@ -281,14 +281,14 @@ const QF = new Intl.DateTimeFormat("ja-JP", { timeZone: "Asia/Tokyo", year: "num
 const chip = (k, v) => `<span style="display:inline-block;border:1px solid var(--tile-edge);border-radius:8px;padding:3px 9px;margin:2px 4px 2px 0;font-size:14px"><span style="color:var(--ink-faint);font-size:12px">${k}</span> ${esc(v)}</span>`;
 async function serve(o, who, sec, text = "") {
   const L = window.LAB, P = await places(), out = $("wOut");
-  if (o.bad) { out.innerHTML = `<p class="verdict"><b class="ng">伝票が読めませんでした</b>（${who}）。もう一度、言い方を変えて頼んでみてください。</p><details><summary>AIが書いたもの</summary><pre class="note">${esc(o.raw)}</pre></details>`; return; }
+  if (o.bad) { out.innerHTML = `<p class="verdict"><b class="ng">質問を読み取れませんでした</b>（${who}）。もう一度、聞き方を変えて、もう一度聞いてみてください。</p><details><summary>AIが書いたもの</summary><pre class="note">${esc(o.raw)}</pre></details>`; return; }
   const pl = o.where ? findPlace(o.where, P) : null, place = pl ? { name: pl.name, lat: pl.lat, lon: pl.lon } : L.place();
-  let ticket = `<div style="margin:6px 0">${chip("書いた人", who + (sec != null ? `・${sec.toFixed(1)}秒` : ""))}${chip("何", o.what.join("・"))}${chip("いつ", o.day === "日付" ? o.date : o.day)}${chip("時間帯", o.part)}${chip("どこ", place.name + (o.where && !pl ? `（「${o.where}」は見つからず）` : ""))}</div>`;
+  let ticket = `<div style="margin:6px 0">${chip("読み取った人", who + (sec != null ? `・${sec.toFixed(1)}秒` : ""))}${chip("何", o.what.join("・"))}${chip("いつ", o.day === "日付" ? o.date : o.day)}${chip("時間帯", o.part)}${chip("どこ", place.name + (o.where && !pl ? `（「${o.where}」は見つからず）` : ""))}</div>`;
   /* コードの点検：メニューにない品（気温など）を頼まれていたら、AIの伝票に関係なく止める。言葉で書かれた品だけ運ぶ */
   const offWord = ["気温", "温度", "湿度", "雪", "雷", "霧", "紫外線", "花粉"].find(w => text.includes(w)) || (OFFRE.test(text) ? "気温" : ""), said = WHAT.filter(w => ({ 気圧: /気圧|hPa/, 風: /風|しけ/, 雨: /雨|降|しけ/, 波: /波|うねり/, 地震: /地震|揺れ|ゆれ|震源/ })[w].test(text));
   if (offWord || o.what.includes(OFF)) {
     const swapped = offWord && !o.what.includes(OFF);
-    const note = `<p class="verdict"><b class="mid">「${esc(offWord || "その品")}」はメニューにありません</b>。運べるのは気圧・風・雨・波・地震だけです。${swapped ? `<br><b class="ng">AIは伝票を「${esc(o.what.join("・"))}」に置きかえていました</b>。コードが気づいて止めました。` : ""}</p>`;
+    const note = `<p class="verdict"><b class="mid">「${esc(offWord || "その品")}」はメニューにありません</b>。運べるのは気圧・風・雨・波・地震だけです。${swapped ? `<br><b class="ng">AIは質問を「${esc(o.what.join("・"))}」と読みかえていました</b>。コードが気づいて止めました。` : ""}</p>`;
     if (!said.length) { out.innerHTML = ticket + note; return; }
     o = { ...o, what: said }; ticket += note;
   }
@@ -319,7 +319,7 @@ async function wGo(useAi) {
   const P = await places();
   if (!useAi) return serve(ruleOrder(text, P), "AIなし", null, text);
   if (!engine) return;
-  setBusy(true); $("wOut").innerHTML = '<p class="note">AIが伝票を書いています…</p>'; const t0 = performance.now();
+  setBusy(true); $("wOut").innerHTML = '<p class="note">AIが質問を読み取っています…</p>'; const t0 = performance.now();
   try { const o = await aiOrder(text); await serve(o, "AI（" + curId.split("-").slice(0, 2).join(" ") + "）", (performance.now() - t0) / 1000, text); }
   catch (e) { $("wOut").innerHTML = `<p class="verdict"><b class="ng">止まりました</b>：${esc(e?.message || e)}</p>`; }
   finally { setBusy(false); }
@@ -381,7 +381,7 @@ async function wTest(useAi) {
     }
     const who = useAi ? "AI（" + curId + "）" : "AIなし";
     const st = (stats.waiter ||= {}); st[who] = `${okN}/${TESTS.length}`; saveStats();
-    out.innerHTML = `<p class="verdict"><b>${esc(who)}</b>：伝票が合っていたのは <b>${okN} / ${TESTS.length}</b></p><div class="tblbox" style="max-height:420px"><table class="tbl"><tr><th>言い方</th><th>合否</th><th>ちがったところ</th></tr>${lines.join("")}</table></div>`;
+    out.innerHTML = `<p class="verdict"><b>${esc(who)}</b>：質問を正しく読み取れたのは <b>${okN} / ${TESTS.length}</b></p><div class="tblbox" style="max-height:420px"><table class="tbl"><tr><th>質問</th><th>合否</th><th>ちがったところ</th></tr>${lines.join("")}</table></div>`;
     showWStats();
   } catch (e) { out.innerHTML = `<p class="verdict"><b class="ng">止まりました</b>：${esc(e?.message || e)}</p>`; }
   finally { setBusy(false); }
@@ -391,14 +391,14 @@ function showWStats() { const el = $("wStats"); if (!el) return; const w = stats
 function mountWaiter() {
   const host = $("waiterCard"); if (!host) return;
   host.innerHTML = `
-  <h2><span class="no">06</span>データのウエイター（AIは伝票を書くだけ）</h2>
-  <p class="what">「いつの・どこの・何を持ってきて」と頼むと、AIが<b>伝票</b>（何・いつ・時間帯・どこ）を書きます。記録庫から値を運んで表とグラフにするのはコードです。伝票はそのまま見せるので、まちがえたら「ちがう料理が来た」と分かります。日付の計算・場所さがし・この先のことの断りもコードがします。AIは 05 で読み込んだものを使います（AIなしでも試せます）。</p>
-  <textarea id="wIn" style="min-height:56px" placeholder="例：おとといの夜の京都の気圧">おとといの夜の京都の気圧</textarea>
-  <div class="ctrl" style="margin-top:8px"><button type="button" id="wAi" disabled>AIに頼む</button><button type="button" id="wRule">AIなしで頼む</button></div>
+  <h2><span class="no">06</span>データを運ぶ（AIは質問を読み取るだけ）</h2>
+  <p class="what">「いつの・どこの・何を見たい」と聞くと、AIが<b>質問を読み取って</b>（何・いつ・時間帯・どこ）見せます。記録庫から値を運んで表とグラフにするのはコードです。読み取った質問はそのまま見せるので、まちがえたらすぐ分かります。日付の計算・場所さがし・この先のことの断りもコードがします。AIは 05 で読み込んだものを使います（AIなしでも試せます）。</p>
+  <textarea id="wIn" style="min-height:56px" placeholder="質問（例：おとといの夜の京都の気圧は？）">おとといの夜の京都の気圧</textarea>
+  <div class="ctrl" style="margin-top:8px"><button type="button" id="wAi" disabled>AIに聞く</button><button type="button" id="wRule">AIなしで聞く</button></div>
   <div id="wOut"></div>
-  <div class="ctrl" style="margin-top:10px"><span class="note">試しの言い方 ${TESTS.length} 個を一気に流す：</span><button type="button" id="wTestAi" disabled>AIで</button><button type="button" id="wTestRule">AIなしで</button></div>
+  <div class="ctrl" style="margin-top:10px"><span class="note">試しの質問 ${TESTS.length} 個を一気に流す：</span><button type="button" id="wTestAi" disabled>AIで</button><button type="button" id="wTestRule">AIなしで</button></div>
   <p class="note" id="wStats"></p>
-  <p class="note">記録は6時間ごと・場所は日本の主な地点だけ（地名が見つからない時は、ダッシュボードで選んでいる場所）。「この前の土曜の雨すごかった日」のような言い方は正解が1つに決まらないので、どう書いたかを見るためのものです。</p>`;
+  <p class="note">記録は6時間ごと・場所は日本の主な地点だけ（地名が見つからない時は、ダッシュボードで選んでいる場所）。「この前の土曜の雨すごかった日」のような聞き方は正解が1つに決まらないので、どう書いたかを見るためのものです。</p>`;
   $("wAi").onclick = () => wGo(true); $("wRule").onclick = () => wGo(false); $("wTestAi").onclick = () => wTest(true); $("wTestRule").onclick = () => wTest(false);
   showWStats();
 }
