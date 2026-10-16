@@ -51,9 +51,14 @@ for f in json.load(open(os.path.join(SRC, "ne_50m_admin_0_countries.geojson")))[
     p = f["properties"]
     if p["NAME"] == "Siachen Glacier":
         continue
-    labels.append({"ja": SHORT.get(p["NAME"], p["NAME_JA"]), "rank": p["LABELRANK"],
-                   "lon": round(p["LABEL_X"], 2), "lat": round(p["LABEL_Y"], 2),
-                   "jp": p.get("FCLASS_JP") != "Unrecognized"})
+    L = {"ja": SHORT.get(p["NAME"], p["NAME_JA"]), "rank": p["LABELRANK"],
+         "lon": round(p["LABEL_X"], 2), "lat": round(p["LABEL_Y"], 2),
+         "jp": p.get("FCLASS_JP") != "Unrecognized"}
+    # 国旗モード用の2文字の国コード（絵文字の国旗を作る）。公式の旗の絵文字がない所（ソマリランド・北キプロス）は付けない
+    iso = next((v.upper() for v in (p.get(k) for k in ("ISO_A2", "ISO_A2_EH", "WB_A2")) if v and v != "-99" and len(v) == 2 and v.isalpha()), None)
+    if iso and p["NAME"] not in ("Somaliland", "N. Cyprus"):
+        L["iso"] = iso
+    labels.append(L)
 
 json.dump({"lines": out}, open(os.path.join(OUT, "boundaries.json"), "w"), ensure_ascii=False, separators=(",", ":"))
 json.dump({"labels": labels}, open(os.path.join(OUT, "labels.json"), "w"), ensure_ascii=False, separators=(",", ":"))

@@ -91,6 +91,10 @@
   body.objet #dashfab{opacity:0;pointer-events:none}
   body.objet .peek,body.objet .hint,body.objet .peek-pick{opacity:0!important;pointer-events:none}
   #spinbadge[hidden]{display:none}
+  #spinbadge{pointer-events:auto;cursor:pointer}
+  #spinbadge .fold::after{content:"▾";margin-left:6px;font-style:normal;color:var(--ink-faint)}
+  #spinbadge.mini .fold::after{content:"▸"}
+  #spinbadge.mini .more{display:none}
   #tourcard{position:fixed;left:16px;right:16px;bottom:calc(70px + env(safe-area-inset-bottom,0px));max-width:520px;margin:0 auto;z-index:4;background:var(--panel);border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);border-radius:12px;padding:12px 40px 12px 14px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
   #tourcard[hidden]{display:none}
   #tourcard .tq{margin:0 0 8px;font-size:14px;line-height:1.65;color:var(--ink)}

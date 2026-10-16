@@ -473,23 +473,39 @@ async function createMapLayer() {
     const g = new THREE.Group(); g.add(a, b); g.visible = false; group.add(g); views[v] = g;
   }
   // 国名：画面上で一定の大きさの文字。拡大するほど小さい国まで出る
-  const labels = [...lb.labels, ...(lb.seas || [])].sort((a, b) => a.rank - b.rank).map(L => {   // 国名と海の名前
-    const cv = document.createElement("canvas"), ctx = cv.getContext("2d"), fs = 44;
-    ctx.font = `${L.sea ? 400 : 500} ${fs}px "Zen Kaku Gothic New","Hiragino Sans","Noto Sans JP",sans-serif`;
-    const w = Math.ceil(ctx.measureText(L.ja).width) + 16; cv.width = w; cv.height = fs + 16;
-    ctx.font = `${L.sea ? 400 : 500} ${fs}px "Zen Kaku Gothic New","Hiragino Sans","Noto Sans JP",sans-serif`; ctx.textBaseline = "middle"; ctx.textAlign = "center";
-    ctx.lineWidth = 8; ctx.strokeStyle = "rgba(3,6,14,0.85)"; ctx.strokeText(L.ja, w / 2, cv.height / 2);
-    ctx.fillStyle = L.sea ? "rgba(150,196,240,0.85)" : "rgba(236,228,210,0.95)"; ctx.fillText(L.ja, w / 2, cv.height / 2);   // 海の名前は青みの文字
+  /* 国名の出し方：名前／国旗（絵文字）／国旗と名前／出さない。国旗は端末の絵文字で描く（iPhone・iPad・Mac はきれい。Windows では2文字の国コードに見えることがある）
+     国旗の絵文字がない所（ソマリランド・北キプロス）と海は、国旗モードでも名前のまま */
+  const LABEL_MODES = { name: "名前", flag: "国旗", both: "国旗と名前", none: "出さない" };
+  const flagOf = iso => iso ? String.fromCodePoint(...[...iso].map(c => 0x1F1E6 + c.charCodeAt(0) - 65)) : "";
+  const FONT = (w, fs) => `${w} ${fs}px "Zen Kaku Gothic New","Hiragino Sans","Noto Sans JP",sans-serif`, EMOJI = fs => `${fs}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
+  function paint(L, mode) {
+    const cv = document.createElement("canvas"), ctx = cv.getContext("2d"), fs = 44, flag = !L.sea && (mode === "flag" || mode === "both") ? flagOf(L.iso) : "";
+    const name = flag && mode === "flag" ? "" : L.ja, fsF = mode === "flag" ? 64 : 48;
+    ctx.font = FONT(L.sea ? 400 : 500, fs); const tw = name ? Math.ceil(ctx.measureText(name).width) : 0;
+    ctx.font = EMOJI(fsF); const fw = flag ? Math.ceil(ctx.measureText(flag).width) : 0;
+    const gap = flag && name ? 10 : 0, w = tw + fw + gap + 16, hgt = Math.max(fs, flag ? fsF : 0) + 16; cv.width = w; cv.height = hgt;
+    ctx.textBaseline = "middle"; ctx.textAlign = "left"; let x = 8;
+    if (flag) { ctx.font = EMOJI(fsF); ctx.shadowColor = "rgba(0,0,0,0.6)"; ctx.shadowBlur = 6; ctx.fillText(flag, x, hgt / 2 + 2); ctx.shadowBlur = 0; x += fw + gap; }
+    if (name) { ctx.font = FONT(L.sea ? 400 : 500, fs); ctx.lineWidth = 8; ctx.strokeStyle = "rgba(3,6,14,0.85)"; ctx.strokeText(name, x, hgt / 2);
+      ctx.fillStyle = L.sea ? "rgba(150,196,240,0.85)" : "rgba(236,228,210,0.95)"; ctx.fillText(name, x, hgt / 2); }   // 海の名前は青みの文字
     const tex = new THREE.CanvasTexture(cv); tex.generateMipmaps = true; tex.minFilter = THREE.LinearMipmapLinearFilter; tex.anisotropy = 4;
-    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, sizeAttenuation: false, transparent: true, depthWrite: false, depthTest: false }));
+    return { tex, aspect: w / hgt, big: mode === "flag" && flag ? 1.35 : 1 };
+  }
+  const labels = [...lb.labels, ...(lb.seas || [])].sort((a, b) => a.rank - b.rank).map(L => {   // 国名と海の名前
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ sizeAttenuation: false, transparent: true, depthWrite: false, depthTest: false }));
     const p = [0, 0, 0]; toXYZ(L.lat, L.lon, 1.012, p, 0); sp.position.set(p[0], p[1], p[2]); sp.renderOrder = 4;
-    sp.userData = { L, aspect: w / cv.height, n: new THREE.Vector3(p[0], p[1], p[2]).normalize() }; group.add(sp);
+    sp.userData = { L, aspect: 1, big: 1, n: new THREE.Vector3(p[0], p[1], p[2]).normalize() }; group.add(sp);
     return sp;
   });
+  let labelMode = "name";
+  const repaint = () => { for (const sp of labels) { if (labelMode === "none") continue; const t = paint(sp.userData.L, labelMode); sp.material.map?.dispose(); sp.material.map = t.tex; sp.material.needsUpdate = true; sp.userData.aspect = t.aspect; sp.userData.big = t.big; } };
+  try { const m = localStorage.getItem("globe.labelMode"); if (LABEL_MODES[m]) labelMode = m; } catch (_) {}
+  repaint();
   let view = "jp", on = false;
   const cam = new THREE.Vector3(), sp2 = new THREE.Vector3(), placed = [];
   return {
-    views: MAP_VIEWS,
+    views: MAP_VIEWS, labelModes: LABEL_MODES,
+    get labelMode() { return labelMode; }, set labelMode(m) { if (!LABEL_MODES[m] || m === labelMode) return; labelMode = m; repaint(); try { localStorage.setItem("globe.labelMode", m); } catch (_) {} },
     get view() { return view; }, set view(v) { view = v; for (const k in views) views[k].visible = k === v; },
     set visible(v) { on = v; group.visible = v; }, get visible() { return on; },
     tick() {
@@ -501,14 +517,14 @@ async function createMapLayer() {
       placed.length = 0;
       const W = stage.clientWidth || 400;
       for (const sp of labels) {             // 大きい国から順に置き、重なる小さい国名は出さない
-        const u = sp.userData; let show = u.L.rank <= maxRank && (view !== "jp" || u.L.jp !== false) && u.n.dot(cam) > 0.25;
+        const u = sp.userData; let show = labelMode !== "none" && u.L.rank <= maxRank && (view !== "jp" || u.L.jp !== false) && u.n.dot(cam) > 0.25;
         if (show) {
           sp2.copy(sp.position).project(camera);
-          const x = (sp2.x + 1) / 2 * W, y = (1 - sp2.y) / 2 * h, hw = px * u.aspect / 2 + 3, hh = px / 2 + 2;
+          const x = (sp2.x + 1) / 2 * W, y = (1 - sp2.y) / 2 * h, hw = px * u.big * u.aspect / 2 + 3, hh = px * u.big / 2 + 2;
           if (placed.some(b => Math.abs(b[0] - x) < b[2] + hw && Math.abs(b[1] - y) < b[3] + hh)) show = false;
           else placed.push([x, y, hw, hh]);
         }
-        sp.visible = show; if (show) sp.scale.set(s * u.aspect, s, 1);
+        sp.visible = show; if (show) sp.scale.set(s * u.big * u.aspect, s * u.big, 1);
       }
     },
   };
@@ -1858,7 +1874,11 @@ const Rotate = (() => {
       const bd = document.getElementById("spinbadge");
       if (bd) {
         if (on) { const ss = subsolarPoint(Clock.now()), la = Math.abs(ss.lat).toFixed(1);
-          bd.innerHTML = `<b>↻ 自転（オブジェ表示）</b><br>地軸の傾き ${EARTH.axialTiltDeg.toFixed(1)}°・向きは今日の本物<br>太陽の真下 ${ss.lat >= 0 ? "北緯" : "南緯"}${la}°（${ss.lat >= 0 ? "北" : "南"}半球が夏の側）<br><span id="moonline">月</span><br><span>速さと昼夜の位置は演出。月は距離だけ縮めています（本物は地球の約60倍の遠さ）</span>`; }
+          bd.innerHTML = `<b>↻ 自転（オブジェ表示）<i class="fold" aria-hidden="true"></i></b><div class="more">地軸の傾き ${EARTH.axialTiltDeg.toFixed(1)}°・向きは今日の本物<br>太陽の真下 ${ss.lat >= 0 ? "北緯" : "南緯"}${la}°（${ss.lat >= 0 ? "北" : "南"}半球が夏の側）<br><span id="moonline">月</span><br><span>速さと昼夜の位置は演出。月は距離だけ縮めています（本物は地球の約60倍の遠さ）</span></div>`;
+          /* 回し始めて8秒で小さく畳む（札だけ残す）。札を押すと開く・閉じる */
+          bd.classList.remove("mini"); clearTimeout(bd._fold); bd._fold = setTimeout(() => bd.classList.add("mini"), 8000);
+          bd.onclick = () => { clearTimeout(bd._fold); bd.classList.toggle("mini"); }; }
+        else clearTimeout(bd._fold);
         bd.hidden = !on;
       }
       document.body.classList.toggle("objet", on);   /* オブジェ表示：下の帯と操作の案内を隠す（歯車・回すボタン・左上の注意書きは残す） */
@@ -1987,7 +2007,7 @@ if (MapLayer) {
       <b>自分のセットとは</b>
       いま出している層の組み合わせに名前を付けて、ワンタップで呼び出せるようにするものです。
       <ul>
-        <li>覚えるもの：出している層、モード（流れる地球・ふつうの地球儀・重ねる・地名）、国境の見方</li>
+        <li>覚えるもの：出している層、モード（流れる地球・ふつうの地球儀・重ねる・地名）、国境の見方、国名の出し方</li>
         <li>3つまで保存できます。名前の横の「×」で消せます</li>
         <li>保存先は<b>この端末の、このブラウザの中だけ</b>です。どこにも送りません</li>
         <li>そのため、別の端末や別のブラウザ（例：iPhone の Safari で作ったセットを、パソコンや Brave で開く）では出てきません</li>
@@ -2005,7 +2025,9 @@ if (MapLayer) {
     ${WIND_LEVELS.slice(1).some(L => Catalog.has(L.id)) ? `<div class="windh"><div class="seg small" role="group" aria-label="風の高さ">${WIND_LEVELS.filter(L => Catalog.has(L.id)).map(L => `<button type="button" data-wlev="${WIND_LEVELS.indexOf(L)}" aria-pressed="${L.id === "wind-10m"}">${L.label}</button>`).join("")}</div>
       <p class="note">風の高さ：上に行くほど地球規模の流れ（偏西風・ジェット気流）が見えます。上空の線は速さに合わせて色の幅を変えています</p></div>` : ""}
     <div class="viewbox"><div class="seg small" role="group" aria-label="国境の見方">${Object.entries(MapLayer.views).map(([k, t]) => `<button type="button" data-view="${k}">${t}</button>`).join("")}</div>
-    <p class="note">国境の見方は二つから選べます。どちらも Natural Earth（パブリックドメイン）の見方別データです。</p></div>`;
+    <p class="note">国境の見方は二つから選べます。どちらも Natural Earth（パブリックドメイン）の見方別データです。</p>
+    <div class="seg small" role="group" aria-label="国名の出し方" style="margin-top:6px">${Object.entries(MapLayer.labelModes).map(([k, t]) => `<button type="button" data-lmode="${k}" aria-pressed="${k === MapLayer.labelMode}">${t}</button>`).join("")}</div>
+    <p class="note">国名の出し方：国旗は端末の絵文字で描いています（Windows のパソコンでは国旗の代わりに2文字の国コードに見えることがあります）。国旗の絵文字がない所は名前のままです。旗を出すことは、国として認めるかどうかの判断ではありません。</p></div>`;
   const detailEl = document.getElementById("detail"); detailEl.insertBefore(box, detailEl.firstChild);   // 切り替えは一番上に（スクロールなしで届く）
   /* 層の出し入れを、小さなボタンの列で。下の説明のチェックとも同じ状態を共有する */
   const layerById = id => SCALAR_LAYERS.find(l => l.id === id) || FEATURE_LAYERS.find(l => l.id === id);
@@ -2243,16 +2265,18 @@ if (MapLayer) {
     if (b.dataset.wdir) { setDir(!VisualParticles.dirMode); return; }
     if (b.dataset.jump) { document.getElementById(b.dataset.jump)?.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" }); return; }
     if (b.dataset.tour) { startTour(TOURS.find(T => T.key === b.dataset.tour)); return; }
+    if (b.dataset.lmode) { MapLayer.labelMode = b.dataset.lmode; box.querySelectorAll("[data-lmode]").forEach(x => x.setAttribute("aria-pressed", String(x.dataset.lmode === MapLayer.labelMode))); return; }
     if (b.dataset.spin) { Rotate.on = !Rotate.on; return; }
     if (b.dataset.spinspd) { Rotate.speed = b.dataset.spinspd; spinSync(); return; }
     if (b.dataset.preset) { applyPreset(PRESETS.find(P => P.key === b.dataset.preset)); return; }
     if (b.dataset.myhelp) { const h = box.querySelector(".myhelp"); h.hidden = !h.hidden; b.setAttribute("aria-expanded", String(!h.hidden)); return; }
     if (b.dataset.myadd) { const a = myLoad(); const name = (window.prompt("セットの名前（あとで見て分かる名前）", `マイセット${a.length + 1}`) || "").trim().slice(0, 16); if (!name) return;
-      a.push({ name, mode: curMode, on: CHIPS.filter(c => c.get()).map(c => c.key), view: MapLayer.view });
+      a.push({ name, mode: curMode, on: CHIPS.filter(c => c.get()).map(c => c.key), view: MapLayer.view, lmode: MapLayer.labelMode });
       if (!mySave(a)) window.alert("このブラウザでは保存できませんでした（プライベートブラウズなど）"); myRender(); return; }
     if (b.dataset.myset) { const m = myLoad()[+b.dataset.myset]; if (!m) return;
       if (m.mode && MODES[m.mode] && m.mode !== curMode) setMode(m.mode);
       if (m.view && MapLayer.views[m.view]) setView(m.view);
+      if (m.lmode && MapLayer.labelModes[m.lmode]) { MapLayer.labelMode = m.lmode; box.querySelectorAll("[data-lmode]").forEach(x => x.setAttribute("aria-pressed", String(x.dataset.lmode === m.lmode))); }
       if (CurrentLayer?.visible && !m.on.includes("currents")) CurrentLayer.setOn(false);
       for (const c of CHIPS) { if (box.querySelector(`[data-chip="${c.key}"]`)?.disabled) continue; const want = m.on.includes(c.key); if (!!c.get() !== want) c.set(want); }
       syncChips(); updateChip(); return; }
