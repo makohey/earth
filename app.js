@@ -2309,6 +2309,67 @@ function updateChip() {
 setInterval(updateChip, 60000);
 updateChip();
 
+/* ===== いつもの場所の数字（左上のボタン → 大きな文字のポップアップ）=====
+   ・場所はダッシュボードで選んだ「いつもの場所」（dash.place）。「今いる場所で見る」を押した時だけ端末の位置を使う（位置は端末の中で使うだけ・どこにも送らない・覚えない）
+   ・数字は地球儀がもう読み込んでいるもの（風・気圧・雨・海面水温の平年差）。波だけ、押した時に自分のページから読む。水源へは行かない
+   ・天気予報ではない。いまの時計の時刻の計算をそのまま出す */
+(() => {
+  const btn = document.getElementById("herebtn"), pop = document.getElementById("herepop"), box = document.getElementById("herebox");
+  if (!btn || !pop || Catalog.mode !== "live" && Catalog.mode !== "sample") return;
+  const home = () => { try { const p = JSON.parse(localStorage.getItem("dash.place") || "null"); if (p && Number.isFinite(p.lat)) return { name: String(p.name || "いつもの場所").replace(/のあたり$|から約.*$/, ""), lat: +p.lat, lon: +p.lon, kind: "いつもの場所" }; } catch (_) {} return { name: "京都市", lat: 35.01, lon: 135.77, kind: "いつもの場所" }; };
+  const label = () => { btn.textContent = `📍 ${home().name}`; };
+  label(); btn.hidden = false; addEventListener("storage", e => { if (e.key === "dash.place") label(); });
+  let PL = null;
+  const nearName = async (la, lo) => { try { PL = PL || (await getJSON("data/map/places_jp.json")).rows; } catch (_) { PL = []; }
+    let best = null, bd = Infinity; for (const [ja, , a, o] of PL) { const d = Math.hypot(a - la, (o - lo) * Math.cos(la * D2R)); if (d < bd) { bd = d; best = ja; } }
+    return best && bd < 0.6 ? `${best}のあたり` : `${Math.abs(la).toFixed(2)}°${la >= 0 ? "N" : "S"} ${Math.abs(lo).toFixed(2)}°${lo >= 0 ? "E" : "W"}`; };
+  const rainWord = v => v == null || Number.isNaN(v) ? "—" : v < 0.1 ? "なし" : v < 1 ? "ごく弱い雨" : v < 3 ? "弱い雨" : v < 10 ? "雨" : v < 20 ? "やや強い雨" : v < 30 ? "強い雨" : "激しい雨";
+  const windWord = v => v < 0.3 ? "ほぼ無風" : v < 3.4 ? "そよそよ" : v < 8 ? "木の葉や小枝がゆれる" : v < 13.9 ? "大きな枝がゆれる" : v < 17.2 ? "歩きにくい" : "とても強い";
+  async function waveAt(lo, la) {
+    if (!Catalog.has("wave")) return null;
+    try { await Catalog.load("wave"); } catch (_) { return null; }
+    const g = Catalog.gridInfo("wave"), a = Catalog.bytes("wave"), n = g.nx * g.ny, pick = (i, j) => { const k = Math.min(g.ny - 1, Math.max(0, j)) * g.nx + ((i % g.nx) + g.nx) % g.nx; return a[k] === g.none ? null : k; };
+    const fi = Math.round((((lo - g.lon0) % 360) + 360) % 360 / g.dx), fj = Math.round((g.lat0 - la) / g.dy); let k = null, far = 0;
+    for (let r = 0; r <= 3 && k == null; r++) for (let dj = -r; dj <= r && k == null; dj++) for (let di = -r; di <= r && k == null; di++) if (Math.max(Math.abs(di), Math.abs(dj)) === r) { k = pick(fi + di, fj + dj); far = r; }
+    if (k == null) return null; const d = a[n + k], p = a[2 * n + k];
+    return { h: a[k] * 0.1, dir: d === g.none ? null : d * 360 / 254, per: p === g.none ? null : p * 0.2, far };
+  }
+  const esc = t => String(t).replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+  const sampleOf = (id, lo, la) => { const L = SCALAR_LAYERS.find(l => l.id === id || l.field?.id === id); if (!L) return null; const v = L.field.sample(lo, la, Clock.now()); return v == null || Number.isNaN(v) ? null : v; };
+  async function show(pl) {
+    const lo = pl.lon, la = pl.lat, t = Clock.now();
+    const [u, v] = field.sample(lo, la, t), sp = Math.hypot(u, v), from = (Math.atan2(-u, -v) / D2R + 360) % 360, lv = field.meta.level || "地上10m";
+    const hpa = sampleOf("pressure", lo, la), rain = sampleOf("rain", lo, la), sst = sampleOf("sst-anom", lo, la);
+    const ago = (Date.now() - t) / 3600000, when = new Intl.DateTimeFormat("ja-JP", { timeZone: "Asia/Tokyo", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(t));
+    const row = (k, val, sub) => `<div class="row"><span class="k">${k}</span><span class="v">${val}</span>${sub ? `<span class="s">${sub}</span>` : ""}</div>`;
+    const render = wv => {
+      box.innerHTML = `<h2>📍 ${esc(pl.name)}</h2><div class="sub">${esc(pl.kind)}・${when} の計算${ago > 48 ? "" : `（約${ago < 1 ? Math.round(ago * 60) + "分" : ago.toFixed(1) + "時間"}前の姿）`}</div>`
+        + (hpa != null ? row("気圧", `${Math.round(hpa).toLocaleString()}<small>hPa</small>`, "海面に直した気圧（約100km四方）") : "")
+        + row("風", `${sp < 0.3 ? "—" : DIRS[Math.round(from / 22.5) % 16]} ${sp.toFixed(1)}<small>m/s</small>`, `${lv !== "地上10m" ? lv + "の風・" : ""}時速約${Math.round(sp * 3.6)}km・${windWord(sp)}`)
+        + (rain != null ? row("雨", rainWord(rain), rain >= 0.1 ? `${rain.toFixed(1)} mm/時（計算）` : "") : "")
+        + (wv ? row("波", `${wv.h.toFixed(1)}<small>m</small>`, `${wv.dir != null ? DIRS[Math.round(wv.dir / 22.5) % 16] + "から・" : ""}${wv.per != null ? "周期 " + wv.per.toFixed(0) + "秒・" : ""}${wv.far ? "近くの沖の値" : "その場所の海"}（有義波高）`) : wv === undefined ? row("波", "…", "読んでいます") : "")
+        + (sst != null ? row("海の温度", `${sst >= 0 ? "+" : ""}${sst.toFixed(1)}<small>℃</small>`, `平年との差（${sst > 0.5 ? "いつもより暖かい" : sst < -0.5 ? "いつもより冷たい" : "いつもくらい"}）`) : "")
+        + `<div class="btns"><a class="go" href="dashboard.html?lat=${la.toFixed(2)}&lon=${lo.toFixed(2)}&name=${encodeURIComponent(pl.name)}" target="_blank" rel="noopener">ダッシュボードで詳しく →</a>`
+        + (pl.kind === "今いる場所" ? `<button type="button" data-here="home">いつもの場所に戻す</button>` : ("geolocation" in navigator ? `<button type="button" data-here="gps">今いる場所で見る</button>` : ""))
+        + `<button type="button" data-here="close">閉じる</button></div>`
+        + `<p class="fine">数字は数値モデルの計算（約100km四方）で、その場所の観測ではありません。天気予報ではありません。この先の天気は <a href="https://www.jma.go.jp/bosai/forecast/" target="_blank" rel="noopener">気象庁</a> へ。いつもの場所はダッシュボードで変えられます。</p>`;
+    };
+    render(Catalog.has("wave") ? undefined : null); pop.hidden = false; box.querySelector("[data-here]")?.focus?.();
+    if (Catalog.has("wave")) render(await waveAt(lo, la));
+  }
+  btn.addEventListener("click", () => show(home()));
+  pop.addEventListener("click", async e => {
+    if (e.target === pop) { pop.hidden = true; return; }
+    const b = e.target.closest("[data-here]"); if (!b) return;
+    if (b.dataset.here === "close") pop.hidden = true;
+    else if (b.dataset.here === "home") show(home());
+    else if (b.dataset.here === "gps") { b.disabled = true; b.textContent = "位置を調べています…";
+      navigator.geolocation.getCurrentPosition(async p => { const la = p.coords.latitude, lo = p.coords.longitude; show({ name: await nearName(la, lo), lat: la, lon: lo, kind: "今いる場所" }); },
+        () => { b.disabled = false; b.textContent = "位置を使えませんでした"; }, { enableHighAccuracy: false, timeout: 10000, maximumAge: 600000 }); }
+  });
+  addEventListener("keydown", e => { if (e.key === "Escape" && !pop.hidden) pop.hidden = true; });
+})();
+
 const dock = document.getElementById("dock"), detail = document.getElementById("lens");
 dock.addEventListener("click", () => { const open = detail.hidden; detail.hidden = !open; dock.setAttribute("aria-expanded", String(open)); });
 /* 地球を回している間だけ、見る帯を薄くする（消さない） */
