@@ -58,6 +58,10 @@ for f in json.load(open(os.path.join(SRC, "ne_50m_admin_0_countries.geojson")))[
     iso = next((v.upper() for v in (p.get(k) for k in ("ISO_A2", "ISO_A2_EH", "WB_A2")) if v and v != "-99" and len(v) == 2 and v.isalpha()), None)
     if iso and p["NAME"] not in ("Somaliland", "N. Cyprus"):
         L["iso"] = iso
+    # 英語名（日本語と英語の併記用）。Natural Earth の NAME_EN を基本に、正式に短い呼び名がある国はそれに
+    EN_FIX = {"United States of America": "United States", "People's Republic of China": "China", "Turkish Republic of Northern Cyprus": "Northern Cyprus",
+              "Czech Republic": "Czechia", "Ivory Coast": "Côte d'Ivoire", "East Timor": "Timor-Leste", "Cape Verde": "Cabo Verde"}
+    L["en"] = EN_FIX.get(p["NAME_EN"], p["NAME_EN"])
     labels.append(L)
 
 json.dump({"lines": out}, open(os.path.join(OUT, "boundaries.json"), "w"), ensure_ascii=False, separators=(",", ":"))

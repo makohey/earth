@@ -475,10 +475,24 @@ async function createMapLayer() {
   // 国名：画面上で一定の大きさの文字。拡大するほど小さい国まで出る
   /* 国名の出し方：名前／国旗（絵文字）／国旗と名前／出さない。国旗は端末の絵文字で描く（iPhone・iPad・Mac はきれい。Windows では2文字の国コードに見えることがある）
      国旗の絵文字がない所（ソマリランド・北キプロス）と海は、国旗モードでも名前のまま */
-  const LABEL_MODES = { name: "名前", flag: "国旗", both: "国旗と名前", none: "出さない" };
+  const LABEL_MODES = { name: "名前", jaen: "日本語と英語", flag: "国旗", both: "国旗と名前", none: "出さない" };
   const flagOf = iso => iso ? String.fromCodePoint(...[...iso].map(c => 0x1F1E6 + c.charCodeAt(0) - 65)) : "";
   const FONT = (w, fs) => `${w} ${fs}px "Zen Kaku Gothic New","Hiragino Sans","Noto Sans JP",sans-serif`, EMOJI = fs => `${fs}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
+  /* 日本語と英語：2行（英語は小さく薄く）。英語名のない海は日本語だけ */
+  function paintJaEn(L) {
+    const cv = document.createElement("canvas"), ctx = cv.getContext("2d"), fs = 44, fe = 36, en = L.sea ? "" : (L.en || "");
+    ctx.font = FONT(L.sea ? 400 : 500, fs); const tw = Math.ceil(ctx.measureText(L.ja).width);
+    ctx.font = FONT(400, fe); const ew = en ? Math.ceil(ctx.measureText(en).width) : 0;
+    const w = Math.max(tw, ew) + 16, hgt = fs + (en ? fe + 4 : 0) + 16; cv.width = w; cv.height = hgt;
+    ctx.textBaseline = "middle"; ctx.textAlign = "center"; ctx.lineWidth = 8; ctx.strokeStyle = "rgba(3,6,14,0.85)";
+    const y1 = 8 + fs / 2; ctx.font = FONT(L.sea ? 400 : 500, fs); ctx.strokeText(L.ja, w / 2, y1);
+    ctx.fillStyle = L.sea ? "rgba(150,196,240,0.85)" : "rgba(236,228,210,0.95)"; ctx.fillText(L.ja, w / 2, y1);
+    if (en) { const y2 = 8 + fs + 4 + fe / 2; ctx.font = FONT(400, fe); ctx.lineWidth = 6; ctx.strokeText(en, w / 2, y2); ctx.fillStyle = "rgba(214,220,232,0.9)"; ctx.fillText(en, w / 2, y2); }
+    const tex = new THREE.CanvasTexture(cv); tex.generateMipmaps = true; tex.minFilter = THREE.LinearMipmapLinearFilter; tex.anisotropy = 4;
+    return { tex, aspect: w / hgt, big: en ? hgt / (fs + 16) : 1 };
+  }
   function paint(L, mode) {
+    if (mode === "jaen") return paintJaEn(L);
     const cv = document.createElement("canvas"), ctx = cv.getContext("2d"), fs = 44, flag = !L.sea && (mode === "flag" || mode === "both") ? flagOf(L.iso) : "";
     const name = flag && mode === "flag" ? "" : L.ja, fsF = mode === "flag" ? 64 : 48;
     ctx.font = FONT(L.sea ? 400 : 500, fs); const tw = name ? Math.ceil(ctx.measureText(name).width) : 0;
@@ -2027,7 +2041,7 @@ if (MapLayer) {
     <div class="viewbox"><div class="seg small" role="group" aria-label="国境の見方">${Object.entries(MapLayer.views).map(([k, t]) => `<button type="button" data-view="${k}">${t}</button>`).join("")}</div>
     <p class="note">国境の見方は二つから選べます。どちらも Natural Earth（パブリックドメイン）の見方別データです。</p>
     <div class="seg small" role="group" aria-label="国名の出し方" style="margin-top:6px">${Object.entries(MapLayer.labelModes).map(([k, t]) => `<button type="button" data-lmode="${k}" aria-pressed="${k === MapLayer.labelMode}">${t}</button>`).join("")}</div>
-    <p class="note">国名の出し方：国旗は端末の絵文字で描いています（Windows のパソコンでは国旗の代わりに2文字の国コードに見えることがあります）。国旗の絵文字がない所は名前のままです。旗を出すことは、国として認めるかどうかの判断ではありません。</p></div>`;
+    <p class="note">国名の出し方：「日本語と英語」の英語名は Natural Earth の英語名です（海の名前は呼び名が分かれる所があるので、今は日本語だけ）。国旗は端末の絵文字で描いています（Windows のパソコンでは国旗の代わりに2文字の国コードに見えることがあります）。国旗の絵文字がない所は名前のままです。旗を出すことは、国として認めるかどうかの判断ではありません。</p></div>`;
   const detailEl = document.getElementById("detail"); detailEl.insertBefore(box, detailEl.firstChild);   // 切り替えは一番上に（スクロールなしで届く）
   /* 層の出し入れを、小さなボタンの列で。下の説明のチェックとも同じ状態を共有する */
   const layerById = id => SCALAR_LAYERS.find(l => l.id === id) || FEATURE_LAYERS.find(l => l.id === id);
