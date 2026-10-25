@@ -367,7 +367,7 @@ function createContourLayer(field, profile, id) {
   let op = 1;
   return { id, field, profile, marks, set visible(v) { group.visible = v; }, get visible() { return group.visible; },
     tick() { if (!group.visible || !marks.length) return; const h = stage.clientHeight || 800, k = 2 * Math.tan(camera.fov / 2 * D2R) / h; cam.copy(camera.position).normalize();
-      for (const m of marks) { wp.copy(m.sp.position).normalize(); const ok = wp.dot(cam) > 0.25; m.sp.visible = ok; if (ok) { const sc = m.sp.userData.px * k; m.sp.scale.set(sc * m.sp.userData.aspect, sc, 1); } } },
+      for (const m of marks) { wp.copy(m.sp.position).normalize(); const ok = wp.dot(cam) > 0.25; m.sp.visible = ok; if (ok) { const sc = m.sp.userData.px * textZoom() * k; m.sp.scale.set(sc * m.sp.userData.aspect, sc, 1); } } },
     set opacity(v) { op = v; for (const m of mats) m.opacity = m.userData.base * v; }, get opacity() { return op; } };
 }
 if (ON && Catalog.has("pressure")) SCALAR_LAYERS.push(createContourLayer(createGridScalarField("pressure"), PRESSURE_PROFILE, "pressure"));
@@ -524,7 +524,7 @@ async function createMapLayer() {
     set visible(v) { on = v; group.visible = v; }, get visible() { return on; },
     tick() {
       if (!on) return;
-      const d = camera.position.length(), px = 12.5, h = stage.clientHeight || 800;
+      const d = camera.position.length(), px = 12.5 * textZoom(), h = stage.clientHeight || 800;
       const s = px / h * 2 * Math.tan(camera.fov / 2 * D2R);
       const maxRank = d > 4.5 ? 2 : d > 3.2 ? 3 : d > 2.2 ? 4 : d > 1.7 ? 5 : 6;
       cam.copy(camera.position).normalize();
@@ -568,6 +568,8 @@ const METEOR_SHOWERS = [
   { name: "ふたご座流星群", from: "12-04", to: "12-20", peak: "12/14ごろ", ra: 112, dec: 33 },
 ];
 function gmstDeg(date) { const n = date.getTime() / 86400000 + 2440587.5 - 2451545.0; return ((280.46061837 + 360.98564736629 * n) % 360 + 360) % 360; }
+/* 地球の文字の大きさ：近づく（拡大する）ほど少し大きくする。遠いと1倍、いちばん近いと約1.4倍（邪魔にならない程度） */
+function textZoom() { const d = camera.position.length(); return 1 + 0.4 * Math.min(1, Math.max(0, (3.2 - d) / (3.2 - 1.35))); }
 function makeTextSprite(text, color, weight = 500, px = 12) {
   const cv = document.createElement("canvas"), ctx = cv.getContext("2d"), fs = 44, font = `${weight} ${fs}px "Zen Kaku Gothic New","Hiragino Sans","Noto Sans JP",sans-serif`;
   ctx.font = font; const w = Math.ceil(ctx.measureText(text).width) + 16; cv.width = w; cv.height = fs + 16;
@@ -670,7 +672,7 @@ async function createSkyLayer() {
       for (const sp of labels) {
         wp.copy(sp.position).applyMatrix4(frame.matrixWorld).normalize();
         const show = skyOn && sp.userData.rank <= maxRank && wp.dot(cam) > 0.3;
-        sp.visible = show; if (show) { const s = sp.userData.px / h * 2 * Math.tan(camera.fov / 2 * D2R); sp.scale.set(s * sp.userData.aspect, s, 1); }
+        sp.visible = show; if (show) { const s = sp.userData.px * textZoom() / h * 2 * Math.tan(camera.fov / 2 * D2R); sp.scale.set(s * sp.userData.aspect, s, 1); }
       }
     },
   };
@@ -710,7 +712,7 @@ async function createCapitalLayer() {
       cam.copy(camera.position).normalize();
       rows.forEach((c, i) => { const vis = view === "fact" ? c.fact : c.jp; show[i] = vis ? 1 : 0;
         const sp = labels[i]; wp.copy(sp.position).normalize(); const ok = vis && c.rank <= maxRank && wp.dot(cam) > 0.3; sp.visible = ok;
-        if (ok) { const sc = sp.userData.px * k; sp.scale.set(sc * sp.userData.aspect, sc, 1); sp.center.set(0.5, -0.35); } });
+        if (ok) { const sc = sp.userData.px * textZoom() * k; sp.scale.set(sc * sp.userData.aspect, sc, 1); sp.center.set(0.5, -0.35); } });
       g.attributes.aShow.needsUpdate = true;
     },
   };
@@ -743,9 +745,9 @@ function createStateLayer() {
       cam.copy(camera.position).normalize(); placed.length = 0;
       for (const sp of labels) {
         wp.copy(sp.position).normalize(); let ok = sp.userData.rank <= maxRank && wp.dot(cam) > 0.35;
-        if (ok) { wp.copy(sp.position).project(camera); const x = (wp.x + 1) / 2 * w, y = (1 - wp.y) / 2 * h, hw = sp.userData.px * sp.userData.aspect / 2 + 4, hh = sp.userData.px / 2 + 3;
+        if (ok) { wp.copy(sp.position).project(camera); const x = (wp.x + 1) / 2 * w, y = (1 - wp.y) / 2 * h, hw = sp.userData.px * textZoom() * sp.userData.aspect / 2 + 4, hh = sp.userData.px * textZoom() / 2 + 3;
           ok = !placed.some(b => Math.abs(b[0] - x) < b[2] + hw && Math.abs(b[1] - y) < b[3] + hh); if (ok) placed.push([x, y, hw, hh]); }   /* 重なる名前は出さない（大きい州から順に） */
-        sp.visible = ok; if (ok) { const sc = sp.userData.px * k; sp.scale.set(sc * sp.userData.aspect, sc, 1); }
+        sp.visible = ok; if (ok) { const sc = sp.userData.px * textZoom() * k; sp.scale.set(sc * sp.userData.aspect, sc, 1); }
       }
     },
   };
@@ -789,7 +791,7 @@ async function createGuideLayer() {
       const h = stage.clientHeight || 800;
       cam.copy(camera.position).normalize();
       for (const sp of labels) { wp.copy(sp.position).normalize(); const ok = wp.dot(cam) > 0.25; sp.visible = ok;
-        if (ok) { const s = sp.userData.px / h * 2 * Math.tan(camera.fov / 2 * D2R); sp.scale.set(s * sp.userData.aspect, s, 1); } }
+        if (ok) { const s = sp.userData.px * textZoom() / h * 2 * Math.tan(camera.fov / 2 * D2R); sp.scale.set(s * sp.userData.aspect, s, 1); } }
     },
   };
 }
@@ -902,7 +904,7 @@ async function createPlateLayer() {
       const h = stage.clientHeight || 800, far = camera.position.length() > 8;
       cam.copy(camera.position).normalize();
       for (const sp of labels) { wp.copy(sp.position).normalize(); const ok = !far && wp.dot(cam) > 0.35; sp.visible = ok;
-        if (ok) { const sc = sp.userData.px / h * 2 * Math.tan(camera.fov / 2 * D2R); sp.scale.set(sc * sp.userData.aspect, sc, 1); } }
+        if (ok) { const sc = sp.userData.px * textZoom() / h * 2 * Math.tan(camera.fov / 2 * D2R); sp.scale.set(sc * sp.userData.aspect, sc, 1); } }
     },
   };
 }
@@ -1104,7 +1106,7 @@ function createSatLayer() {
         a.next.geometry.attributes.position.setXYZ(0, ...a.s.cur.p); a.next.geometry.attributes.position.needsUpdate = true; a.next.computeLineDistances(); }
       labels.forEach((sp, i) => { if (!sp) return; const s = sats[i]; if (!s.cur || hidden(s.cur.p)) { sp.visible = false; return; }
         wp.set(...s.cur.p); const r = wp.length(); wp.multiplyScalar((r + 0.03) / r); sp.position.copy(wp); sp.visible = true;
-        const sc = sp.userData.px * k; sp.scale.set(sc * sp.userData.aspect, sc, 1); });
+        const sc = sp.userData.px * textZoom() * k; sp.scale.set(sc * sp.userData.aspect, sc, 1); });
     },
     /** 画面上で一番近い衛星（タップ用）。地球の陰にあるものは選ばない */
     pickScreen(ndcPt) { let best = null, bd = 0.05;
@@ -1277,7 +1279,7 @@ const CurrentLayer = (() => {
     for (const sp of labels.children) {
       wp.copy(sp.position).normalize();
       const show = sp.userData.rank <= maxRank && wp.dot(cam) > 0.25;            /* 裏側の名札は出さない */
-      sp.visible = show; if (show) { const k = sp.userData.px / h * 2 * Math.tan(camera.fov / 2 * D2R); sp.scale.set(k * sp.userData.aspect, k, 1); }
+      sp.visible = show; if (show) { const k = sp.userData.px * textZoom() / h * 2 * Math.tan(camera.fov / 2 * D2R); sp.scale.set(k * sp.userData.aspect, k, 1); }
     }
   }
   function spawn(i) {
@@ -1718,7 +1720,7 @@ const InteriorLayer = (() => {
       if (!on) return;
       const h = stage.clientHeight || 800; cam.copy(camera.position);
       const front = cam.dot(n1) > 0.05;                                  /* 断面1が見える側にいるときだけ名札を出す */
-      for (const sp of labels.children) { sp.visible = front; if (front) { const k = sp.userData.px / h * 2 * Math.tan(camera.fov / 2 * D2R); sp.scale.set(k * sp.userData.aspect, k, 1); } }
+      for (const sp of labels.children) { sp.visible = front; if (front) { const k = sp.userData.px * textZoom() / h * 2 * Math.tan(camera.fov / 2 * D2R); sp.scale.set(k * sp.userData.aspect, k, 1); } }
     },
   };
 })();
