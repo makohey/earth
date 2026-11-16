@@ -88,9 +88,6 @@ function draw() {
   x.globalAlpha = 1;
   if (rows[0]) { const [px, py] = P(rows[0].lon, rows[0].lat); x.strokeStyle = "#fff"; x.lineWidth = 1.5; x.beginPath(); x.arc(px, py, radius(rows[0].mag) + 4, 0, 7); x.stroke(); }
   if (st.sel) { const [px, py] = P(st.sel.lon, st.sel.lat); x.strokeStyle = "#8fe3d4"; x.lineWidth = 2.5; x.beginPath(); x.arc(px, py, radius(st.sel.mag) + 6, 0, 7); x.stroke(); }
-  const cur = window.Dash?.cur?.(); if (cur && cur.lon > VIEW.w && cur.lon < VIEW.e && cur.lat > VIEW.s && cur.lat < VIEW.n) {
-    const [px, py] = P(cur.lon, cur.lat); x.fillStyle = "#e9b35a"; x.beginPath(); x.moveTo(px, py - 7); x.lineTo(px + 6, py + 4); x.lineTo(px - 6, py + 4); x.closePath(); x.fill();
-    x.font = "11px sans-serif"; x.fillText(String(cur.name).replace(/のあたり$|から約.*$/, ""), px + 8, py + 4); }
 }
 function rowHtml(q) {
   const it = intOf(q);
@@ -120,7 +117,7 @@ function mount() {
     <span style="flex:1"></span><div class="jq-seg" role="group" aria-label="並べ方"><button type="button" data-sort="new" aria-pressed="true">新しい順</button><button type="button" data-sort="big" aria-pressed="false">大きい順</button></div></div>
   <div class="jq-sum"></div>
   <div class="jq-body"><div><canvas aria-label="日本の地図に置いた地震"></canvas>
-    <div class="jq-legend"><span><i style="background:${NOINT}"></i>震度の情報なし</span>${["1", "2", "3", "4", "5-", "5+", "6-", "6+", "7"].map(k => SHINDO[k]).map(v => `<span><i style="background:${v[2]}"></i>${v[0].replace("震度", "")}</span>`).join("")}<span>・丸の大きさ＝マグニチュード・白い輪＝いちばん新しい</span></div></div>
+    <div class="jq-legend"><span><i style="background:${NOINT}"></i>震度の情報なし</span>${["1", "2", "3", "4", "5-", "5+", "6-", "6+", "7"].map(k => SHINDO[k]).map(v => `<span><i style="background:${v[2]}"></i>${v[0].replace("震度", "")}</span>`).join("")}<span>・丸の大きさ＝マグニチュード・白い輪＝いちばん新しい（選んでいる場所は上の📍で）</span></div></div>
     <div class="jq-list"><p class="say">読んでいます…</p></div></div>
   <div class="jq-links"><a href="https://www.jma.go.jp/bosai/map.html#contents=earthquake_map" target="_blank" rel="noopener">くわしくは気象庁の地震情報へ →</a></div>
   <div class="say">過去の記録です。地震の予知や予報ではありません。気象庁が発表した地震情報（震度1以上を観測した地震など）を、地球儀が更新のたびにためたものです。最大震度は、その地震でいちばん強く揺れた所の震度です（お住まいの場所の揺れではありません）。<span class="jq-since"></span></div>
