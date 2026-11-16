@@ -42,8 +42,9 @@ jobs:
       - name: ページを組み立てる
         run: |
           mkdir -p _site
-          cp index.html app.js dashboard.html lab.html lab-ai.js lab-plan.js astro.js calc.js _site/
+          cp index.html app.js dashboard.html lab.html lab-ai.js lab-plan.js astro.js calc.js jpquake.js _site/
           A=$(sha256sum astro.js | cut -c1-10); sed -i "s|src=\"astro.js\"|src=\"astro.js?v=$A\"|" _site/dashboard.html
+          J=$(sha256sum jpquake.js | cut -c1-10); sed -i "s|src=\"jpquake.js\"|src=\"jpquake.js?v=$J\"|" _site/dashboard.html
           K=$(sha256sum calc.js | cut -c1-10); sed -i "s|src=\"calc.js\"|src=\"calc.js?v=$K\"|" _site/dashboard.html
           Q=$(sha256sum lab-plan.js | cut -c1-10); sed -i "s|src=\"lab-plan.js\"|src=\"lab-plan.js?v=$Q\"|" _site/lab.html
           L=$(sha256sum lab-ai.js | cut -c1-10); sed -i "s|src=\"lab-ai.js\"|src=\"lab-ai.js?v=$L\"|" _site/lab.html
@@ -242,6 +243,23 @@ jobs:
         with:
           path: archive_store
           key: archive-${{ github.run_id }}
+
+      # 日本の地震の記録庫：気象庁の地震情報の一覧を、新しい GFS の回のときだけ1回もらい、捨てずにためる（data/quakejp/）
+      - uses: actions/cache/restore@v6
+        if: steps.reuse.outputs.deploy == 'true'
+        with:
+          path: quakejp_store
+          key: quakejp-${{ github.run_id }}
+          restore-keys: quakejp-
+      - name: 日本の地震（気象庁の地震情報。新しい回のときだけ1回）をためる
+        if: steps.reuse.outputs.deploy == 'true'
+        continue-on-error: true
+        run: python scripts/quake_jp.py --store quakejp_store --out _site/data/quakejp --fetch ${{ steps.reuse.outputs.hit != 'true' }}
+      - uses: actions/cache/save@v6
+        if: steps.reuse.outputs.deploy == 'true' && hashFiles('quakejp_store/quakes.json') != ''
+        with:
+          path: quakejp_store
+          key: quakejp-${{ github.run_id }}
 
       # 一式を置き場に残す（次にコードを送ったとき、これを使う）。push で火山などを足した分も含めて残す。一式が作れなかったときは残さない
       - name: 取った一式を置き場へ

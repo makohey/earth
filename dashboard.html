@@ -113,16 +113,18 @@
 
 <div id="loading">データを読み込んでいます…</div>
 <div class="grid" id="grid" hidden></div>
+<section class="tile" id="jpquake"></section>
 <section class="tile astro" id="astro"></section>
 
 <footer>
   天気の数字は GFS（米国 NOAA の全球モデル）の計算で、約100km四方（1°の升目）の様子です。その場所の観測ではありません。この先の天気は扱いません（気象庁へ）。<br>
-  月と太陽は計算（低い精度の式・数分ずれることがあります）。時刻はすべて日本時間。地震は USGS の記録（M5以上・1990〜2025年）、プレートは PB2002（Bird 2003）、海底の年齢は EarthByte（Seton ほか 2020）。地図は Natural Earth。<br>
+  月と太陽は計算（低い精度の式・数分ずれることがあります）。時刻はすべて日本時間。地震は USGS の記録（M5以上・1990〜2025年）と、気象庁の地震情報をためた記録（出典：気象庁ホームページ）、プレートは PB2002（Bird 2003）、海底の年齢は EarthByte（Seton ほか 2020）。地図は Natural Earth。<br>
   データは地球儀が自分のページに置いた分だけを読みます（水源へは行きません）。
 </footer>
 
 <script src="astro.js"></script>
 <script src="calc.js"></script>
+<script src="jpquake.js"></script>
 <script>
 "use strict";
 const D2R = Math.PI / 180;
