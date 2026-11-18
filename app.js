@@ -2025,6 +2025,7 @@ if (MapLayer) {
       <ul>
         <li>覚えるもの：出している層、モード（流れる地球・ふつうの地球儀・重ねる・地名）、国境の見方、国名の出し方</li>
         <li>3つまで保存できます。名前の横の「×」で消せます</li>
+        <li>名前の横の「☆」を押して「★」にすると、次に開いた時からその形で始まります（★は1つだけ。もう一度押すと外れます）</li>
         <li>保存先は<b>この端末の、このブラウザの中だけ</b>です。どこにも送りません</li>
         <li>そのため、別の端末や別のブラウザ（例：iPhone の Safari で作ったセットを、パソコンや Brave で開く）では出てきません</li>
         <li>プライベートブラウズを閉じたときや、ブラウザの履歴とデータを消したときは、なくなります</li>
@@ -2221,10 +2222,17 @@ if (MapLayer) {
   const esc = t => String(t).replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
   const myRender = () => {
     const a = myLoad(), el = box.querySelector(".mysets");
-    el.innerHTML = `<span class="cap">自分のセット</span><button type="button" class="help" data-myhelp="1" aria-expanded="${!box.querySelector(".myhelp").hidden}" aria-label="自分のセットの説明">？</button>` + a.map((m, i) => `<span class="myset"><button type="button" data-myset="${i}">${esc(m.name)}</button><button type="button" class="del" data-mydel="${i}" aria-label="${esc(m.name)}を消す">×</button></span>`).join("")
+    el.innerHTML = `<span class="cap">自分のセット</span><button type="button" class="help" data-myhelp="1" aria-expanded="${!box.querySelector(".myhelp").hidden}" aria-label="自分のセットの説明">？</button>` + a.map((m, i) => `<span class="myset"><button type="button" data-myset="${i}">${esc(m.name)}</button><button type="button" class="star" data-mydef="${i}" aria-pressed="${!!m.def}" aria-label="${esc(m.name)}を開いた時の形にする" title="開いた時の形にする">${m.def ? "★" : "☆"}</button><button type="button" class="del" data-mydel="${i}" aria-label="${esc(m.name)}を消す">×</button></span>`).join("")
       + (a.length < MY_MAX ? `<button type="button" class="add" data-myadd="1">＋ いまの組み合わせを保存</button>` : "");
   };
 
+  function applyMy(m) { if (!m) return;
+    if (m.mode && MODES[m.mode] && m.mode !== curMode) setMode(m.mode);
+    if (m.view && MapLayer.views[m.view]) setView(m.view);
+    if (m.lmode && MapLayer.labelModes[m.lmode]) { MapLayer.labelMode = m.lmode; box.querySelectorAll("[data-lmode]").forEach(x => x.setAttribute("aria-pressed", String(x.dataset.lmode === m.lmode))); }
+    if (CurrentLayer?.visible && !m.on.includes("currents")) CurrentLayer.setOn(false);
+    for (const c of CHIPS) { if (box.querySelector(`[data-chip="${c.key}"]`)?.disabled) continue; const want = m.on.includes(c.key); if (!!c.get() !== want) c.set(want); }
+    syncChips(); updateChip(); }
   var syncChips = () => { box.querySelectorAll("[data-chip]").forEach(b => b.setAttribute("aria-pressed", String(!!CHIPS.find(c => c.key === b.dataset.chip).get()))); syncCounts(); const qn = box.querySelector(".qh-note"); if (qn) qn.hidden = !QuakeHistLayer?.visible; const fn = box.querySelector(".fr-note"); if (fn) fn.hidden = !FrontLayer?.visible; const pn = box.querySelector(".pm-note"); if (pn) pn.hidden = !PlateMoveLayer.visible; const sn = box.querySelector(".sa-note"); if (sn) sn.hidden = !SeaAgeLayer?.visible; };
   /* 地名の地球儀：文字が見やすいよう、選べる層をしぼった固定モード。入る前の状態を覚えておき、出るときに戻す */
   const NAMES_OK = ["map", "capitals", "guide", "plates", "platemove", "seaage", "quakes", "quakehist", "volcanoes"], NAMES_OFF_AT_START = ["quakes", "quakehist", "volcanoes", "plates", "platemove", "seaage"];
@@ -2289,17 +2297,14 @@ if (MapLayer) {
     if (b.dataset.myadd) { const a = myLoad(); const name = (window.prompt("セットの名前（あとで見て分かる名前）", `マイセット${a.length + 1}`) || "").trim().slice(0, 16); if (!name) return;
       a.push({ name, mode: curMode, on: CHIPS.filter(c => c.get()).map(c => c.key), view: MapLayer.view, lmode: MapLayer.labelMode });
       if (!mySave(a)) window.alert("このブラウザでは保存できませんでした（プライベートブラウズなど）"); myRender(); return; }
-    if (b.dataset.myset) { const m = myLoad()[+b.dataset.myset]; if (!m) return;
-      if (m.mode && MODES[m.mode] && m.mode !== curMode) setMode(m.mode);
-      if (m.view && MapLayer.views[m.view]) setView(m.view);
-      if (m.lmode && MapLayer.labelModes[m.lmode]) { MapLayer.labelMode = m.lmode; box.querySelectorAll("[data-lmode]").forEach(x => x.setAttribute("aria-pressed", String(x.dataset.lmode === m.lmode))); }
-      if (CurrentLayer?.visible && !m.on.includes("currents")) CurrentLayer.setOn(false);
-      for (const c of CHIPS) { if (box.querySelector(`[data-chip="${c.key}"]`)?.disabled) continue; const want = m.on.includes(c.key); if (!!c.get() !== want) c.set(want); }
-      syncChips(); updateChip(); return; }
+    if (b.dataset.mydef) { const a = myLoad(), i = +b.dataset.mydef; if (!a[i]) return; const on = !a[i].def; a.forEach((m, j) => { m.def = on && j === i; }); mySave(a); myRender(); return; }
+    if (b.dataset.myset) { applyMy(myLoad()[+b.dataset.myset]); return; }
     if (b.dataset.mydel) { const a = myLoad(), i = +b.dataset.mydel; if (!a[i] || !window.confirm(`「${a[i].name}」を消しますか？`)) return; a.splice(i, 1); mySave(a); myRender(); return; }
     if (b.dataset.chip) { const c = CHIPS.find(c => c.key === b.dataset.chip); c.set(!c.get()); syncChips(); return; }   /* 一つだけ出す・消す。他の層は勝手に消さない */
     if (b.dataset.mode) setMode(b.dataset.mode); if (b.dataset.view) setView(b.dataset.view); });
   setView("jp"); setMode("flow"); myRender();
+  /* ★を付けた自分のセットがあれば、開いた時にその形で始める（この端末のこのブラウザだけ） */
+  { const d = myLoad().find(m => m.def); if (d) applyMy(d); }
 }
 for (const l of SCALAR_LAYERS) document.getElementById("t-" + l.id).addEventListener("change", e => { l.visible = e.target.checked; updateChip(); if (typeof syncChips === "function") syncChips(); });
 /** 見る帯の札：いまの時計の時刻が「どれくらい前／後」か。止まっていたら知らせる */
