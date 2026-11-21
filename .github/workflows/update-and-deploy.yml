@@ -147,7 +147,7 @@ jobs:
       - name: 人工衛星の位置（CelesTrak の軌道要素を5回に分けて取り、SGP4 で計算）
         if: steps.reuse.outputs.hit != 'true'
         continue-on-error: true
-        run: python scripts/fetch_sats.py --latest _site/data/latest
+        run: python scripts/fetch_sats.py --latest _site/data/latest --prev saved_latest
 
       # 火山と揺れの波紋：自分の置き場を持ち、取ったものは取り直さない（同じ月の一覧・同じ日の週報・同じ地震の ShakeMap）。
       # だから push でも走らせてよい（置き場にない新しい分だけを取りに行く）

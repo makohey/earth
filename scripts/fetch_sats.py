@@ -51,7 +51,7 @@ def note(msg, level="notice"):
 
 def get_tle(query):
     req = urllib.request.Request(f"{GP}?{query}&FORMAT=TLE", headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=60) as r:
+    with urllib.request.urlopen(req, timeout=120) as r:
         lines = [l.rstrip() for l in r.read().decode("ascii", "replace").splitlines() if l.strip()]
     out = []
     for i in range(len(lines) - 2):
@@ -93,7 +93,23 @@ def track(l1, l2, now, kind):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--latest", required=True)
+    ap.add_argument("--prev", default=None, help="前の回の一式。取れなかった衛星は、前の回にもらった軌道要素で計算し直す（取りに行き直さない）")
     args = ap.parse_args()
+    # 前の回にもらった軌道要素（TLE）。軌道要素は数日はじゅうぶん使えるので、取れなかった時の予備にする
+    prev_tle = {"single": {}, "gnss": []}
+    if args.prev and os.path.exists(os.path.join(args.prev, "sats_tle.json")):
+        try:
+            prev_tle = json.load(open(os.path.join(args.prev, "sats_tle.json"), encoding="utf-8"))
+        except Exception:
+            pass
+    tle_out = {"single": {}, "gnss": []}
+    MAX_OLD = {"station": 3, "telescope": 3, "weather": 10, "gnss": 10}   # 予備を使ってよい古さ（日）
+
+    def fresh_enough(l1, kind):
+        y, d = int(l1[18:20]), float(l1[20:32])
+        ep = dt.datetime(2000 + y if y < 57 else 1900 + y, 1, 1, tzinfo=dt.timezone.utc) + dt.timedelta(days=d - 1)
+        return (dt.datetime.now(dt.timezone.utc) - ep).days <= MAX_OLD[kind]
+    used_prev = []
     mpath = os.path.join(args.latest, "manifest.json")
     if not os.path.exists(mpath):
         return
@@ -108,25 +124,45 @@ def main():
         epochs.append(ep); ends.append(end)
 
     for s in SINGLE:
+        got = None
         try:
             got = get_tle(f"CATNR={s['catnr']}")
-            if got:
-                add(s, got[0][0] or s["ja"], got[0][1], got[0][2])
-            else:
-                missing.append(s["ja"])
         except Exception as e:
-            note(f"{s['ja']} の軌道要素を取得できませんでした: {e}", "warning"); missing.append(s["ja"])
+            note(f"{s['ja']} の軌道要素を取得できませんでした: {e}", "warning")
+        if not got:
+            old = prev_tle.get("single", {}).get(str(s["catnr"]))
+            if old and fresh_enough(old[1], s["kind"]):
+                got = [tuple(old)]; used_prev.append(s["label"])
+        if got:
+            tle_out["single"][str(s["catnr"])] = list(got[0])
+            add(s, got[0][0] or s["ja"], got[0][1], got[0][2])
+        else:
+            missing.append(s["ja"])
         time.sleep(2)                                      # 相手に優しく
     count = {}
+    gnss = []
     try:
-        for name, l1, l2 in get_tle(f"GROUP={GNSS_GROUP}"):
+        gnss = get_tle(f"GROUP={GNSS_GROUP}")
+    except Exception as e:
+        note(f"測位衛星の軌道要素を取得できませんでした: {e}", "warning")
+    if not gnss:   # 取れなかった：前の回にもらった分で計算し直す（測位衛星の軌道はとても安定しているので数日は使える）
+        gnss = [tuple(x) for x in prev_tle.get("gnss", []) if fresh_enough(x[1], "gnss")]
+        if gnss:
+            used_prev.append(f"測位衛星 {len(gnss)} 機")
+    tle_out["gnss"] = [list(x) for x in gnss if any(x[0].startswith(p) for p, _, _ in GNSS_PICK)]
+    try:
+        for name, l1, l2 in gnss:
             for pre, kind, ja in GNSS_PICK:
                 if name.startswith(pre):
                     count[kind] = count.get(kind, 0) + 1
                     add({"id": f"{kind}-{l2[2:7].strip()}", "kind": kind, "ja": ja}, name, l1, l2)
                     break
     except Exception as e:
-        note(f"測位衛星の軌道要素を取得できませんでした: {e}", "warning")
+        note(f"測位衛星の計算でつまずきました: {e}", "warning")
+    if used_prev:
+        note(f"人工衛星：今回取れなかった分は、前の回にもらった軌道要素で計算しました（{'、'.join(used_prev)}）", "warning")
+    if tle_out["single"] or tle_out["gnss"]:
+        json.dump(tle_out, open(os.path.join(args.latest, "sats_tle.json"), "w", encoding="utf-8"), ensure_ascii=False, separators=(",", ":"))
     if not sats:
         note("人工衛星：一つも計算できませんでした（今回は衛星なし）", "warning")
         return
